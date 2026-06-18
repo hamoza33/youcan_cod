@@ -7,7 +7,7 @@ import { MAIN_CATEGORIES, mainCategoryBySlug } from '@/lib/categories/main-categ
 import { toJsonValue } from '@/lib/http/client';
 
 export async function syncYouCanCategories() {
-  const client = new YouCanClient();
+  const client = await YouCanClient.create();
   const categories = await client.listCategories({ limit: 100 });
   let synced = 0;
 
@@ -21,7 +21,7 @@ export async function syncYouCanCategories() {
 }
 
 export async function ensureMainYouCanCategories() {
-  const client = new YouCanClient();
+  const client = await YouCanClient.create();
   let remoteCategories = await client.listCategories({ limit: 100, maxPages: 3 });
   let created = 0;
   let mapped = 0;

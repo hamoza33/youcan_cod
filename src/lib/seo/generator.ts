@@ -30,10 +30,10 @@ export async function generateSeoMetadata(input: {
   ai?: OpenAICompatibleClient;
   search?: WebSearchClient;
 }): Promise<SeoGenerationResult & { aiProvider: string; aiModel: string; rawAiResponse: unknown }> {
-  const ai = input.ai ?? new OpenAICompatibleClient();
+  const ai = input.ai ?? await OpenAICompatibleClient.create();
   const search = input.search ?? new WebSearchClient();
   const query = [input.product.rawName ?? input.product.name, input.product.description].filter(Boolean).join(' ');
-  const searchResults = query ? await search.search(`${query} same exact product multiple images marketplace`) : [];
+  const searchResults = query ? await search.search(`${query} exact same product same color same model multiple angle images marketplace`) : [];
   const ruleCategorySlug = categorizeProductByRules({
     name: input.product.name,
     rawName: input.product.rawName,
@@ -90,7 +90,7 @@ export async function generateSeoMetadata(input: {
                 'اختم بضمان استرجاع خلال 15 يومًا.',
                 'لا تذكر ادعاءات طبية أو نتائج مضمونة أو وعود مبالغ فيها.',
                 'اختر categorySlug من availableYouCanCategoriesOnly فقط. استخدم ruleBasedCategorySlug إذا كان مناسبًا للمنتج، ولا تضع المنتج في التصنيف الافتراضي إلا إذا لم يوجد تصنيف أدق.',
-                'اختر صورًا لنفس المنتج فقط في selectedImageUrls، ويفضل 4-5 إن كانت متاحة ومؤكدة.',
+                'اختر صورًا لنفس المنتج بالضبط فقط في selectedImageUrls، ويفضل 4-5 إن كانت متاحة ومؤكدة. ارفض أي لون أو شكل أو موديل أو مقاس أو حزمة مختلفة حتى لو كان المنتج مشابهًا.',
               ],
               requiredOutput: {
                 productType: 'نوع المنتج بالعربية',

@@ -1,6 +1,6 @@
 import { CountryCode, LogSource } from '@prisma/client';
-import { getEnv } from '@/lib/env';
 import { requestJson } from '@/lib/http/client';
+import { getConfig } from '@/lib/settings/config';
 import { countryMatches } from '@/lib/countries';
 import { codRecommendedPrice } from '@/lib/products/cod-pricing';
 
@@ -80,13 +80,25 @@ export class CodNetworkClient {
   private readonly token?: string;
   private readonly catalogEndpoint: string;
   private readonly accountProductsEndpoint: string;
+  private readonly addProductEndpoint?: string;
 
-  constructor() {
-    const env = getEnv();
-    this.baseUrl = env.COD_NETWORK_BASE_URL.replace(/\/$/, '');
-    this.token = env.COD_NETWORK_API_TOKEN;
-    this.catalogEndpoint = env.COD_NETWORK_CATALOG_ENDPOINT;
-    this.accountProductsEndpoint = env.COD_NETWORK_ACCOUNT_PRODUCTS_ENDPOINT;
+  private constructor(config: { baseUrl: string; token?: string; catalogEndpoint: string; accountProductsEndpoint: string; addProductEndpoint?: string }) {
+    this.baseUrl = config.baseUrl.replace(/\/$/, '');
+    this.token = config.token;
+    this.catalogEndpoint = config.catalogEndpoint;
+    this.accountProductsEndpoint = config.accountProductsEndpoint;
+    this.addProductEndpoint = config.addProductEndpoint;
+  }
+
+  static async create() {
+    const env = await getConfig();
+    return new CodNetworkClient({
+      baseUrl: env.COD_NETWORK_BASE_URL,
+      token: env.COD_NETWORK_API_TOKEN,
+      catalogEndpoint: env.COD_NETWORK_CATALOG_ENDPOINT,
+      accountProductsEndpoint: env.COD_NETWORK_ACCOUNT_PRODUCTS_ENDPOINT,
+      addProductEndpoint: env.COD_NETWORK_ADD_PRODUCT_ENDPOINT,
+    });
   }
 
   async listAvailableProducts(input: { country: CountryCode; sku?: string; name?: string; limit?: number }) {
@@ -122,7 +134,7 @@ export class CodNetworkClient {
       return { sellerProduct: existing, sku: existing.sku };
     }
 
-    const endpoint = process.env.COD_NETWORK_ADD_PRODUCT_ENDPOINT;
+    const endpoint = this.addProductEndpoint;
     if (!endpoint) {
       throw new MissingCodEndpointError();
     }

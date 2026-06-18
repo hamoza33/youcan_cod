@@ -19,7 +19,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
           <div>
             <p className="text-sm font-semibold uppercase tracking-[0.2em] text-brand-600">COD Automation</p>
-            <h1 className="text-lg font-bold text-ink">KSA Import Control</h1>
+            <h1 className="text-lg font-bold text-ink">GCC Import Control</h1>
           </div>
         </div>
 
@@ -39,9 +39,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </nav>
 
         <div className="absolute bottom-6 left-5 right-5 rounded-3xl bg-slate-900 p-5 text-white">
-          <p className="text-sm font-semibold">KSA only</p>
+          <p className="text-sm font-semibold">GCC countries</p>
           <p className="mt-2 text-xs leading-5 text-slate-300">
-            Product discovery, SKU mapping, YouCan import, and GMC submissions are scoped to Saudi Arabia.
+            Product discovery, SKU mapping, YouCan import, and GMC submissions can be controlled per supported COD Network country.
           </p>
           <form action={logoutAction} className="mt-4">
             <button className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-white/10 px-3 py-2 text-xs font-bold text-white transition hover:bg-white/20">

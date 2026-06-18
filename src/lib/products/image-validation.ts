@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { getOptionalConfig } from '@/lib/settings/config';
 
 export type ImageValidationResult = {
   url: string;
@@ -8,7 +9,13 @@ export type ImageValidationResult = {
   bytesRead?: number;
 };
 
-const IMAGE_TIMEOUT_MS = Number(process.env.IMAGE_VALIDATION_TIMEOUT_MS ?? 5000);
+async function imageTimeoutMs() {
+  try {
+    return (await getOptionalConfig()).IMAGE_VALIDATION_TIMEOUT_MS ?? Number(process.env.IMAGE_VALIDATION_TIMEOUT_MS ?? 5000);
+  } catch {
+    return Number(process.env.IMAGE_VALIDATION_TIMEOUT_MS ?? 5000);
+  }
+}
 
 export async function validateImageUrl(url: string): Promise<ImageValidationResult> {
   const trimmed = url.trim();
@@ -18,7 +25,7 @@ export async function validateImageUrl(url: string): Promise<ImageValidationResu
   try {
     const response = await fetch(trimmed, {
       headers: { Accept: 'image/*,*/*', Range: 'bytes=0-1023' },
-      signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS),
+      signal: AbortSignal.timeout(await imageTimeoutMs()),
     });
     if (!response.ok || !response.body) {
       return { url: trimmed, ok: false, error: `Image request failed with ${response.status}` };
@@ -84,7 +91,7 @@ export async function dedupeImageUrlsByContent(urls: string[], options: { max?: 
 async function imageContentHash(url: string, maxBytes: number) {
   const response = await fetch(url, {
     headers: { Accept: 'image/*,*/*' },
-    signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS),
+    signal: AbortSignal.timeout(await imageTimeoutMs()),
   });
   if (!response.ok || !response.body) throw new Error(`Image request failed with ${response.status}`);
   const contentType = response.headers.get('content-type');

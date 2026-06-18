@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '@/lib/db';
 import { importToYouCan, pushToGmc } from '@/lib/jobs/pipeline';
 import { upsertManualProduct } from '@/lib/products/manual-product';
+import { getOptionalConfig } from '@/lib/settings/config';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,7 +22,7 @@ const manualProductSchema = z.object({
   categorySlug: z.string().optional(),
   visible: z.boolean().default(true),
   seo: z.record(z.unknown()).optional(),
-  pushGmc: z.boolean().default(process.env.GOOGLE_MERCHANT_ENABLED === 'true'),
+  pushGmc: z.boolean().optional(),
 });
 
 export async function POST(request: Request) {
@@ -29,13 +30,14 @@ export async function POST(request: Request) {
 
   try {
     const input = manualProductSchema.parse(await request.json());
+    const env = await getOptionalConfig();
     const product = await upsertManualProduct(input);
 
     stage = 'import-youcan';
     const youCanProduct = await importToYouCan(product.id, { enqueueGmc: false });
 
     stage = 'push-gmc';
-    const gmcResponse = input.pushGmc ? await pushToGmc(product.id) : null;
+    const gmcResponse = (input.pushGmc ?? env.GOOGLE_MERCHANT_ENABLED === 'true') ? await pushToGmc(product.id) : null;
 
     const refreshed = await prisma.codProduct.findUniqueOrThrow({
       where: { id: product.id },

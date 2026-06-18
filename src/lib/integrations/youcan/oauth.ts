@@ -1,6 +1,7 @@
 import { LogSource } from '@prisma/client';
-import { getEnv } from '@/lib/env';
+import { type AppEnv } from '@/lib/env';
 import { requestJson } from '@/lib/http/client';
+import { getConfig } from '@/lib/settings/config';
 
 export type YouCanTokenResponse = {
   token_type: 'Bearer';
@@ -9,8 +10,8 @@ export type YouCanTokenResponse = {
   refresh_token: string;
 };
 
-export function buildYouCanAuthorizationUrl(scopes: string[] = ['*']) {
-  const env = getEnv();
+export async function buildYouCanAuthorizationUrl(scopes: string[] = ['*']) {
+  const env = await getConfig();
   if (!env.YOUCAN_CLIENT_ID || !env.YOUCAN_REDIRECT_URI) {
     throw new Error('YOUCAN_CLIENT_ID and YOUCAN_REDIRECT_URI are required to build the YouCan OAuth authorization URL.');
   }
@@ -23,7 +24,7 @@ export function buildYouCanAuthorizationUrl(scopes: string[] = ['*']) {
 }
 
 export async function exchangeYouCanAuthorizationCode(code: string) {
-  const env = getEnv();
+  const env = await getConfig();
   const { clientId, clientSecret, redirectUri } = requireOAuthEnv(env);
   const body = new URLSearchParams({
     grant_type: 'authorization_code',
@@ -41,15 +42,16 @@ export async function exchangeYouCanAuthorizationCode(code: string) {
   });
 }
 
-export async function refreshYouCanAccessToken(refreshToken = getEnv().YOUCAN_REFRESH_TOKEN) {
-  const env = getEnv();
+export async function refreshYouCanAccessToken(refreshToken?: string) {
+  const env = await getConfig();
+  const tokenToRefresh = refreshToken ?? env.YOUCAN_REFRESH_TOKEN;
   const { clientId, clientSecret } = requireOAuthEnv(env);
-  if (!refreshToken) throw new Error('YOUCAN_REFRESH_TOKEN is required to refresh the YouCan access token.');
+  if (!tokenToRefresh) throw new Error('YOUCAN_REFRESH_TOKEN is required to refresh the YouCan access token.');
   const body = new URLSearchParams({
     grant_type: 'refresh_token',
     client_id: clientId,
     client_secret: clientSecret,
-    refresh_token: refreshToken,
+    refresh_token: tokenToRefresh,
   });
 
   return requestJson<YouCanTokenResponse>(`${env.YOUCAN_BASE_URL.replace(/\/$/, '')}/oauth/token`, {
@@ -60,7 +62,7 @@ export async function refreshYouCanAccessToken(refreshToken = getEnv().YOUCAN_RE
   });
 }
 
-function requireOAuthEnv(env: ReturnType<typeof getEnv>) {
+function requireOAuthEnv(env: AppEnv) {
   if (!env.YOUCAN_CLIENT_ID || !env.YOUCAN_CLIENT_SECRET || !env.YOUCAN_REDIRECT_URI) {
     throw new Error('YOUCAN_CLIENT_ID, YOUCAN_CLIENT_SECRET, and YOUCAN_REDIRECT_URI are required for YouCan OAuth.');
   }

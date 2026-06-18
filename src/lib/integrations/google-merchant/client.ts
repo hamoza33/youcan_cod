@@ -1,7 +1,7 @@
 import { GoogleAuth } from 'google-auth-library';
 import { LogSource } from '@prisma/client';
-import { getEnv } from '@/lib/env';
 import { requestJson } from '@/lib/http/client';
+import { getConfig } from '@/lib/settings/config';
 
 export type MerchantPrice = {
   amountMicros: string;
@@ -42,13 +42,23 @@ export class GoogleMerchantClient {
   private readonly dataSourceId?: string;
   private readonly auth: GoogleAuth;
 
-  constructor() {
-    const env = getEnv();
-    this.accountId = env.GOOGLE_MERCHANT_ACCOUNT_ID;
-    this.dataSourceId = env.GOOGLE_MERCHANT_DATA_SOURCE_ID;
+  private constructor(config: { accountId?: string; dataSourceId?: string; serviceAccountJson?: string; applicationCredentials?: string }) {
+    this.accountId = config.accountId;
+    this.dataSourceId = config.dataSourceId;
     this.auth = new GoogleAuth({
       scopes: ['https://www.googleapis.com/auth/content'],
-      credentials: env.GOOGLE_SERVICE_ACCOUNT_JSON ? JSON.parse(env.GOOGLE_SERVICE_ACCOUNT_JSON) : undefined,
+      keyFilename: config.applicationCredentials || undefined,
+      credentials: config.serviceAccountJson ? JSON.parse(config.serviceAccountJson) : undefined,
+    });
+  }
+
+  static async create() {
+    const env = await getConfig();
+    return new GoogleMerchantClient({
+      accountId: env.GOOGLE_MERCHANT_ACCOUNT_ID,
+      dataSourceId: env.GOOGLE_MERCHANT_DATA_SOURCE_ID,
+      serviceAccountJson: env.GOOGLE_SERVICE_ACCOUNT_JSON,
+      applicationCredentials: env.GOOGLE_APPLICATION_CREDENTIALS,
     });
   }
 
