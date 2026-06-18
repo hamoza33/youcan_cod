@@ -3,7 +3,7 @@ import { CountryCode, LogLevel, LogSource, StockStatus } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { logEvent } from '@/lib/logger';
 import { enqueueJob } from '@/lib/jobs/queue';
-import { getOptionalEnv } from '@/lib/env';
+import { getOptionalConfig } from '@/lib/settings/config';
 import { normalizeCountryCode } from '@/lib/countries';
 import { codBasePrice, numeric } from '@/lib/products/cod-pricing';
 import { toJsonValue } from '@/lib/http/client';
@@ -11,7 +11,7 @@ import { toJsonValue } from '@/lib/http/client';
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
-  const env = getOptionalEnv();
+  const env = await getOptionalConfig();
   if (env.COD_NETWORK_WEBHOOK_SECRET) {
     const supplied = request.headers.get('x-cod-webhook-secret') ?? request.headers.get('x-webhook-secret');
     if (supplied !== env.COD_NETWORK_WEBHOOK_SECRET) {
@@ -54,7 +54,7 @@ export async function POST(request: Request) {
     updated += 1;
     touched.push(product.id);
     await enqueueJob('import-youcan', { codProductId: product.id, country: product.country, force: true });
-    if (process.env.GOOGLE_MERCHANT_ENABLED === 'true') {
+    if (env.GOOGLE_MERCHANT_ENABLED === 'true') {
       await enqueueJob('push-gmc', { codProductId: product.id, country: product.country, force: true });
     }
   }

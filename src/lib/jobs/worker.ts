@@ -5,6 +5,7 @@ import { discoverCodProducts, enrichSeo, ensureCodSku, importToYouCan, pushToGmc
 import { syncYouCanCategories } from '@/lib/categories/youcan-sync';
 import { prisma } from '@/lib/db';
 import { logEvent } from '@/lib/logger';
+import { getSettingValue } from '@/lib/settings/runtime';
 
 const jobTypeMap: Record<AutomationJobName, JobType> = {
   'discover-cod-products': JobType.DISCOVER_COD_PRODUCTS,
@@ -17,53 +18,69 @@ const jobTypeMap: Record<AutomationJobName, JobType> = {
   'sync-youcan-categories': JobType.SYNC_YOUCAN_CATEGORIES,
 };
 
-const worker = new Worker<AutomationJobData, unknown, AutomationJobName>(
-  QUEUE_NAME,
-  async (job) => {
-    const importJob = await prisma.importJob.create({
-      data: {
-        type: jobTypeMap[job.name],
-        status: JobStatus.RUNNING,
-        codProductId: job.data.codProductId,
-        attempts: job.attemptsMade + 1,
-        payload: job.data,
-        startedAt: new Date(),
-      },
-    });
+async function startWorker() {
+  const worker = new Worker<AutomationJobData, unknown, AutomationJobName>(
+    QUEUE_NAME,
+    async (job) => {
+      const importJob = await prisma.importJob.create({
+        data: {
+          type: jobTypeMap[job.name],
+          status: JobStatus.RUNNING,
+          codProductId: job.data.codProductId,
+          attempts: job.attemptsMade + 1,
+          payload: job.data,
+          startedAt: new Date(),
+        },
+      });
 
-    try {
-      const result = await runAutomationJob(job.name, job.data);
-      await prisma.importJob.update({
-        where: { id: importJob.id },
-        data: { status: JobStatus.COMPLETED, result: result as object, finishedAt: new Date() },
-      });
-      return result;
-    } catch (error) {
-      await prisma.importJob.update({
-        where: { id: importJob.id },
-        data: { status: JobStatus.FAILED, error: String(error), finishedAt: new Date() },
-      });
-      if (job.data.codProductId) {
-        await prisma.codProduct.update({
-          where: { id: job.data.codProductId },
-          data: {
-            lastError: String(error),
-            importStatus: job.name === 'import-youcan' ? ImportStatus.FAILED : undefined,
-            seoStatus: job.name === 'enrich-seo' ? SeoStatus.FAILED : undefined,
-          },
+      try {
+        const result = await runAutomationJob(job.name, job.data);
+        await prisma.importJob.update({
+          where: { id: importJob.id },
+          data: { status: JobStatus.COMPLETED, result: result as object, finishedAt: new Date() },
         });
+        return result;
+      } catch (error) {
+        await prisma.importJob.update({
+          where: { id: importJob.id },
+          data: { status: JobStatus.FAILED, error: String(error), finishedAt: new Date() },
+        });
+        if (job.data.codProductId) {
+          await prisma.codProduct.update({
+            where: { id: job.data.codProductId },
+            data: {
+              lastError: String(error),
+              importStatus: job.name === 'import-youcan' ? ImportStatus.FAILED : undefined,
+              seoStatus: job.name === 'enrich-seo' ? SeoStatus.FAILED : undefined,
+            },
+          });
+        }
+        await logEvent({ source: LogSource.SYSTEM, level: LogLevel.ERROR, message: `Job ${job.name} failed`, codProductId: job.data.codProductId, context: { error: String(error) } });
+        throw error;
       }
-      await logEvent({ source: LogSource.SYSTEM, level: LogLevel.ERROR, message: `Job ${job.name} failed`, codProductId: job.data.codProductId, context: { error: String(error) } });
-      throw error;
-    }
-  },
-  { connection: createRedisConnection(), concurrency: Number(process.env.WORKER_CONCURRENCY ?? 4) },
-);
+    },
+    { connection: createRedisConnection(), concurrency: await workerConcurrency() },
+  );
+
+  worker.on('ready', () => {
+    console.log(`Worker listening on queue ${QUEUE_NAME}`);
+  });
+
+  worker.on('failed', (job, error) => {
+    console.error(`Job ${job?.name} failed`, error);
+  });
+}
+
+async function workerConcurrency() {
+  return Math.max(1, await getSettingValue<number>('worker.concurrency').catch(() => Number(process.env.WORKER_CONCURRENCY ?? 4)));
+}
 
 async function runAutomationJob(name: AutomationJobName, data: AutomationJobData) {
   switch (name) {
-    case 'discover-cod-products':
-      return discoverCodProducts(data.country ?? CountryCode.SA);
+    case 'discover-cod-products': {
+      const defaultCountry = await getSettingValue<CountryCode>('country.default').catch(() => CountryCode.SA);
+      return discoverCodProducts(data.country ?? defaultCountry);
+    }
     case 'ensure-cod-sku':
       if (!data.codProductId) throw new Error('codProductId is required');
       return ensureCodSku(data.codProductId);
@@ -86,10 +103,7 @@ async function runAutomationJob(name: AutomationJobName, data: AutomationJobData
   }
 }
 
-worker.on('ready', () => {
-  console.log(`Worker listening on queue ${QUEUE_NAME}`);
-});
-
-worker.on('failed', (job, error) => {
-  console.error(`Job ${job?.name} failed`, error);
+startWorker().catch((error) => {
+  console.error('Worker failed to start', error);
+  process.exit(1);
 });

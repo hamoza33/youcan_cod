@@ -1,7 +1,7 @@
 import { LogLevel, LogSource } from '@prisma/client';
-import { getOptionalEnv } from '@/lib/env';
 import { requestJson, toJsonValue } from '@/lib/http/client';
 import { logEvent } from '@/lib/logger';
+import { getOptionalConfig } from '@/lib/settings/config';
 
 export type ImageCandidate = {
   url: string;
@@ -51,7 +51,7 @@ export async function reverseSearchImagesWithSerpApi(input: {
   query?: string;
   max?: number;
 }) {
-  const env = getOptionalEnv();
+  const env = await getOptionalConfig();
   const apiKey = env.SERPAPI_API_KEY;
   if (!apiKey) return [];
 
@@ -97,7 +97,7 @@ export async function searchImagesWithBrightData(input: {
   max?: number;
   country?: string;
 }) {
-  const env = getOptionalEnv();
+  const env = await getOptionalConfig();
   const apiKey = env.BRIGHTDATA_API_KEY;
   if (!apiKey) return [];
 

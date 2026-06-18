@@ -1,11 +1,11 @@
 import { LogLevel, LogSource } from '@prisma/client';
-import { getOptionalEnv } from '@/lib/env';
 import { logEvent } from '@/lib/logger';
 import { OpenAICompatibleClient } from '@/lib/ai/openai-compatible';
 import { WebSearchResult } from '@/lib/search/web-search';
 import { validateImageUrls, dedupeImageUrlsByContent } from '@/lib/products/image-validation';
 import { ImageCandidate, reverseSearchImagesWithSerpApi, searchImagesWithBrightData, shouldRejectCandidate } from '@/lib/products/image-search-providers';
 import { toJsonValue } from '@/lib/http/client';
+import { getOptionalConfig } from '@/lib/settings/config';
 
 export type SelectedImageResult = {
   selectedImageUrls: string[];
@@ -20,7 +20,7 @@ export async function selectAccurateProductImages(input: {
   searchResults: WebSearchResult[];
   ai?: OpenAICompatibleClient;
 }) {
-  const env = getOptionalEnv();
+  const env = await getOptionalConfig();
   const targetCount = numberSetting(env.IMAGE_ENRICHMENT_TARGET_COUNT, 5, 4, 5);
   const minimumCount = Math.min(4, targetCount);
   const maxCandidates = numberSetting(env.IMAGE_ENRICHMENT_MAX_CANDIDATES, 35, 12, 60);
@@ -106,14 +106,14 @@ async function selectWithAi(input: {
   if (input.validCandidates.length <= 1) return fallback;
 
   try {
-    const ai = input.ai ?? new OpenAICompatibleClient();
+    const ai = input.ai ?? await OpenAICompatibleClient.create();
     const metadataByUrl = new Map(input.candidates.map((candidate) => [candidate.url, candidate]));
     const result = await ai.chatJson<SelectedImageResult>(
       [
         {
           role: 'system',
           content:
-            'You select ecommerce product images. Return only image URLs that show the exact same physical product as the original COD image/product. Reject logos, sprites, tracking pixels, thumbnails that are not the product, packaging-only images when the product is absent, and similar-but-different products. Keep the original COD image first when it is valid. Target 4-5 total images only if they are exact matches; otherwise return fewer and explain why.',
+            'You select ecommerce product images for import. Return only image URLs that show the exact same physical product as the original COD image/product. Reject every different variant: different color, pattern, material, size, model, bundle quantity, packaging-only image, accessory-only image, similar replacement product, or same category but not the same item. Accept only additional angles/perspectives/details of the identical item. Reject logos, sprites, tracking pixels, thumbnails that are not the product, and similar-but-different products. Keep the original COD image first when it is valid. Target 4-5 total images only if they are exact matches; otherwise return fewer and explain why.',
         },
         {
           role: 'user',
@@ -134,7 +134,7 @@ async function selectWithAi(input: {
                 })),
                 searchEvidence: input.searchResults.map((result) => ({ title: result.title, url: result.url, snippet: result.snippet })).slice(0, 10),
                 requiredOutput: {
-                  selectedImageUrls: 'array of 1-5 URL strings. Use only validatedCandidates. Keep at most one COD image: the reference image. Prefer unique online images from different listings/angles that match the exact same product.',
+                  selectedImageUrls: 'array of 1-5 URL strings. Use only validatedCandidates. Keep at most one COD image: the reference image. Prefer unique online images from different listings/angles that match the exact same product. Do not include different colors, variants, models, sizes, or bundles.',
                   rejectedImageUrls: 'optional array of URLs rejected as not exact product images',
                   notes: 'short reason for selected/rejected images',
                 },
@@ -167,7 +167,7 @@ async function validatePrioritizedCandidates(candidates: ImageCandidate[], max: 
 }
 
 function buildImageSearchQuery(input: { title: string; rawName?: string | null }) {
-  return uniqueWords([input.rawName, input.title, 'product images ecommerce different angles'].filter(Boolean).join(' ')).slice(0, 14).join(' ');
+  return uniqueWords([input.rawName, input.title, 'exact same product images different angles no color variant'].filter(Boolean).join(' ')).slice(0, 14).join(' ');
 }
 
 function uniqueWords(value: string) {

@@ -35,7 +35,7 @@ export function buildMerchantProductInput(input: {
       googleProductCategory: input.category?.googleProductCategory ?? undefined,
       customLabel0: 'COD Network',
       customLabel1: input.category?.slug,
-      shipping: [{ country: 'SA' }],
+      shipping: [{ country: input.product.country }],
     },
   };
 }

@@ -1,6 +1,6 @@
 import { LogSource } from '@prisma/client';
-import { getEnv } from '@/lib/env';
 import { requestJson } from '@/lib/http/client';
+import { getConfig } from '@/lib/settings/config';
 
 export type ChatMessage = {
   role: 'system' | 'user' | 'assistant';
@@ -22,12 +22,16 @@ export class OpenAICompatibleClient {
   private readonly baseUrl: string;
   private readonly apiKey?: string;
 
-  constructor() {
-    const env = getEnv();
-    this.providerName = env.AI_PROVIDER_NAME;
-    this.baseUrl = env.AI_BASE_URL.replace(/\/$/, '');
-    this.apiKey = env.AI_API_KEY;
-    this.model = env.AI_MODEL;
+  constructor(config?: { providerName?: string; baseUrl?: string; apiKey?: string; model?: string }) {
+    this.providerName = config?.providerName ?? process.env.AI_PROVIDER_NAME ?? 'DuckCoding';
+    this.baseUrl = (config?.baseUrl ?? process.env.AI_BASE_URL ?? 'https://www.duckcoding.ai/').replace(/\/$/, '');
+    this.apiKey = config?.apiKey ?? process.env.AI_API_KEY;
+    this.model = config?.model ?? process.env.AI_MODEL ?? 'claude-opus-4-8';
+  }
+
+  static async create() {
+    const env = await getConfig();
+    return new OpenAICompatibleClient({ providerName: env.AI_PROVIDER_NAME, baseUrl: env.AI_BASE_URL, apiKey: env.AI_API_KEY, model: env.AI_MODEL });
   }
 
   async chatJson<T>(messages: ChatMessage[], schemaDescription: string): Promise<T> {

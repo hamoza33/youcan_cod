@@ -1,7 +1,7 @@
 import { LogLevel, LogSource } from '@prisma/client';
-import { getEnv } from '@/lib/env';
 import { requestJson } from '@/lib/http/client';
 import { logEvent } from '@/lib/logger';
+import { getConfig } from '@/lib/settings/config';
 
 export type WebSearchResult = {
   title: string;
@@ -18,7 +18,7 @@ type TavilySearchResponse = {
 
 export class WebSearchClient {
   async search(query: string): Promise<WebSearchResult[]> {
-    const env = getEnv();
+    const env = await getConfig();
     if (env.WEB_SEARCH_PROVIDER.toLowerCase() !== 'tavily' || !env.WEB_SEARCH_API_KEY) {
       await logEvent({
         source: LogSource.SEARCH,

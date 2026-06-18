@@ -12,9 +12,11 @@ export function buildYouCanProductPayload(input: {
   category?: Category | null;
   discountRules: DiscountRule[];
   visible: boolean;
+  appBaseUrl?: string | null;
+  textButtonVariantType?: number;
 }): YouCanProductPayload {
   const price = Number(input.product.price ?? input.product.productCost ?? 0);
-  const imageUrls = proxiedImageUrls(input.product);
+  const imageUrls = proxiedImageUrls(input.product, input.appBaseUrl);
   const activeRules = input.discountRules.filter((rule) => rule.isActive && rule.quantity > 1).sort((a, b) => a.quantity - b.quantity);
   const description = enforceArabicDescriptionLength(input.seo.description);
 
@@ -32,7 +34,7 @@ export function buildYouCanProductPayload(input: {
     cost_price: input.product.productCost ? Number(input.product.productCost) : undefined,
     categories: [input.category.youCanCategoryId],
     images: imageUrls.map((url, index) => ({ name: url, order: index + 1, type: 1 as const })),
-    meta: { title: input.seo.metaTitle, description: input.seo.metaDescription, images: imageUrls.slice(0, 1) },
+    meta: { title: input.seo.metaTitle, description: input.seo.metaDescription, images: imageUrls },
     slug: input.seo.slug,
   };
 
@@ -50,7 +52,7 @@ export function buildYouCanProductPayload(input: {
   return {
     ...basePayload,
     has_variants: true,
-    variant_options: [{ name: optionName, type: TEXT_BUTTON_VARIANT_TYPE, values: [arabicQuantityValue(1), ...activeRules.map((rule) => arabicQuantityValue(rule.quantity))] }],
+    variant_options: [{ name: optionName, type: input.textButtonVariantType ?? TEXT_BUTTON_VARIANT_TYPE, values: [arabicQuantityValue(1), ...activeRules.map((rule) => arabicQuantityValue(rule.quantity))] }],
     variants: [
       {
         variations: { [optionName]: arabicQuantityValue(1) },
@@ -74,8 +76,8 @@ export function buildYouCanProductPayload(input: {
   };
 }
 
-function proxiedImageUrls(product: CodProduct) {
-  const baseUrl = process.env.APP_BASE_URL?.replace(/\/$/, '');
+function proxiedImageUrls(product: CodProduct, appBaseUrl?: string | null) {
+  const baseUrl = appBaseUrl?.replace(/\/$/, '') || process.env.APP_BASE_URL?.replace(/\/$/, '');
   if (!baseUrl) return product.imageUrls;
   return product.imageUrls.map((_url, index) => `${baseUrl}/api/images/cod/${product.id}/${index}`);
 }

@@ -1,6 +1,6 @@
 import { LogSource } from '@prisma/client';
-import { getEnv } from '@/lib/env';
 import { requestJson } from '@/lib/http/client';
+import { getConfig } from '@/lib/settings/config';
 
 export type YouCanProductImage = {
   name: string;
@@ -101,10 +101,14 @@ export class YouCanClient {
   private readonly baseUrl: string;
   private readonly token?: string;
 
-  constructor() {
-    const env = getEnv();
-    this.baseUrl = env.YOUCAN_BASE_URL.replace(/\/$/, '');
-    this.token = env.YOUCAN_API_TOKEN;
+  private constructor(config: { baseUrl: string; token?: string }) {
+    this.baseUrl = config.baseUrl.replace(/\/$/, '');
+    this.token = config.token;
+  }
+
+  static async create() {
+    const env = await getConfig();
+    return new YouCanClient({ baseUrl: env.YOUCAN_BASE_URL, token: env.YOUCAN_API_TOKEN });
   }
 
   async listProducts(params: { include?: string[]; page?: number; limit?: number; maxPages?: number } = {}) {

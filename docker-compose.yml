@@ -21,7 +21,7 @@ services:
       - redis
     ports:
       - "8124:3000"
-    command: sh -c "npx prisma migrate deploy && npm run db:seed && npm run start"
+    command: sh -c "npx prisma migrate deploy && npm run db:seed && node .next/standalone/server.js"
 
   worker:
     build: .

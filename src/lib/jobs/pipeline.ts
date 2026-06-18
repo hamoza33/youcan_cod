@@ -24,14 +24,15 @@ import { ensureMappedCategory } from '@/lib/categories/youcan-sync';
 import { YouCanClient, youCanPrimaryVariantId, youCanProductPublicUrl } from '@/lib/integrations/youcan/client';
 import { buildMerchantProductInput } from '@/lib/products/gmc-payload';
 import { GoogleMerchantClient } from '@/lib/integrations/google-merchant/client';
-import { getOptionalEnv } from '@/lib/env';
+import { getOptionalConfig } from '@/lib/settings/config';
+import { getSettingValue } from '@/lib/settings/runtime';
 import { toJsonValue } from '@/lib/http/client';
 
 export async function discoverCodProducts(country: CountryCode = CountryCode.SA) {
   const syncRun = await prisma.syncRun.create({
     data: { type: JobType.DISCOVER_COD_PRODUCTS, status: JobStatus.RUNNING, country, startedAt: new Date() },
   });
-  const client = new CodNetworkClient();
+  const client = await CodNetworkClient.create();
   let discovered = 0;
   let failed = 0;
 
@@ -73,7 +74,7 @@ export async function ensureCodSku(codProductId: string) {
     return product.codSku;
   }
 
-  const client = new CodNetworkClient();
+  const client = await CodNetworkClient.create();
   const result = await client.ensureSellerProduct((product.rawPayload ?? {}) as CodDropProduct);
 
   const formula = await getPricingFormula();
@@ -196,6 +197,7 @@ export async function importToYouCan(codProductId: string, options: { enqueueGmc
       await prisma.codProduct.update({ where: { id: codProductId }, data: { imageUrls: validation.validImageUrls } });
     }
     const productForPayload = { ...importProduct, imageUrls: validation.validImageUrls };
+    const env = await getOptionalConfig();
     const discountRules = await prisma.discountRule.findMany({ where: { isActive: true }, orderBy: { sortOrder: 'asc' } });
     const payload = buildYouCanProductPayload({
       product: productForPayload,
@@ -204,12 +206,14 @@ export async function importToYouCan(codProductId: string, options: { enqueueGmc
       category,
       discountRules,
       visible: product.visibilityStatus === VisibilityStatus.VISIBLE,
+      appBaseUrl: env.APP_BASE_URL,
+      textButtonVariantType: Number(env.YOUCAN_TEXT_BUTTON_VARIANT_TYPE ?? 2),
     });
 
-    const youcan = new YouCanClient();
+    const youcan = await YouCanClient.create();
     const youcanProduct = await youcan.createOrUpdateBySku(product.codSku, payload, product.mapping?.youCanProductId ?? undefined);
 
-    const publicUrl = youCanProductPublicUrl(youcanProduct, process.env.YOUCAN_STORE_URL, youcanProduct.slug ?? product.seoMetadata.slug);
+    const publicUrl = youCanProductPublicUrl(youcanProduct, env.YOUCAN_STORE_URL, youcanProduct.slug ?? product.seoMetadata.slug);
     const variantId = youCanPrimaryVariantId(youcanProduct, product.codSku);
     await prisma.productMapping.upsert({
       where: { codSku: product.codSku },
@@ -237,7 +241,7 @@ export async function importToYouCan(codProductId: string, options: { enqueueGmc
     });
 
     await logEvent({ source: LogSource.YOUCAN, message: `Imported/updated YouCan product ${youcanProduct.id}`, codProductId });
-    if ((options.enqueueGmc ?? true) && process.env.GOOGLE_MERCHANT_ENABLED === 'true') {
+    if ((options.enqueueGmc ?? true) && env.GOOGLE_MERCHANT_ENABLED === 'true') {
       await enqueueJob('push-gmc', { codProductId });
     }
     return youcanProduct;
@@ -251,7 +255,7 @@ export async function importToYouCan(codProductId: string, options: { enqueueGmc
 }
 
 export async function pushToGmc(codProductId: string) {
-  const env = getOptionalEnv();
+  const env = await getOptionalConfig();
   const product = await prisma.codProduct.findUniqueOrThrow({
     where: { id: codProductId },
     include: { seoMetadata: true, category: true, mapping: true },
@@ -261,15 +265,15 @@ export async function pushToGmc(codProductId: string) {
   if (!appBaseUrl) throw new Error('APP_BASE_URL or YOUCAN_STORE_URL is required to build Google Merchant product links.');
 
   await prisma.codProduct.update({ where: { id: codProductId }, data: { gmcStatus: GmcStatus.PENDING } });
-  const merchant = new GoogleMerchantClient();
+  const merchant = await GoogleMerchantClient.create();
   const payload = buildMerchantProductInput({
     product,
     mapping: product.mapping,
     seo: product.seoMetadata,
     category: product.category,
     appBaseUrl,
-    contentLanguage: process.env.GMC_CONTENT_LANGUAGE ?? 'ar',
-    feedLabel: process.env.GMC_FEED_LABEL ?? 'SA',
+    contentLanguage: env.GMC_CONTENT_LANGUAGE ?? 'ar',
+    feedLabel: env.GMC_FEED_LABEL ?? 'SA',
   });
   const response = await merchant.insertProduct(payload);
   const productId = response.product ? String(response.product).split('/').pop() : merchant.buildProductId(payload);
@@ -296,8 +300,9 @@ export async function pushToGmc(codProductId: string) {
 }
 
 export async function syncStock(country?: CountryCode) {
-  const client = new CodNetworkClient();
+  const client = await CodNetworkClient.create();
   const sellerProducts = await client.listSellerProducts();
+  const env = await getOptionalConfig();
   const formula = await getPricingFormula();
   let updated = 0;
 
@@ -316,7 +321,7 @@ export async function syncStock(country?: CountryCode) {
     });
     updated += 1;
     await enqueueJob('import-youcan', { codProductId: product.id, force: true });
-    if (process.env.GOOGLE_MERCHANT_ENABLED === 'true') {
+    if (env.GOOGLE_MERCHANT_ENABLED === 'true') {
       await enqueueJob('push-gmc', { codProductId: product.id, force: true });
     }
   }
@@ -328,7 +333,7 @@ export async function syncStock(country?: CountryCode) {
 export async function refreshGmcStatus(codProductId: string) {
   const product = await prisma.codProduct.findUniqueOrThrow({ where: { id: codProductId }, include: { mapping: true } });
   if (!product.mapping?.googleProductId) throw new Error('No Google product ID exists for this product.');
-  const merchant = new GoogleMerchantClient();
+  const merchant = await GoogleMerchantClient.create();
   const response = await merchant.getProductStatus(product.mapping.googleProductId);
   const status = deriveGmcStatus(response);
   await prisma.codProduct.update({ where: { id: codProductId }, data: { gmcStatus: status, lastGmcSyncAt: new Date() } });
@@ -390,8 +395,7 @@ async function upsertCodDropProduct(product: CodDropProduct, country: CountryCod
 }
 
 async function getPricingFormula(): Promise<PricingFormula> {
-  const setting = await prisma.setting.findUnique({ where: { key: 'pricing.defaultFormula' } });
-  return (setting?.value as PricingFormula | null) ?? { type: 'markup_percent', value: 60, roundTo: 0.99 };
+  return getSettingValue<PricingFormula>('pricing.defaultFormula').catch(() => ({ type: 'markup_percent', value: 60, roundTo: 0.99 }));
 }
 
 function mergeImageUrls(...groups: Array<unknown[] | null | undefined>) {
