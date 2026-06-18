@@ -1,0 +1,8 @@
+-- Add additional COD Network countries and category sync job type.
+ALTER TYPE "CountryCode" ADD VALUE IF NOT EXISTS 'AE';
+ALTER TYPE "CountryCode" ADD VALUE IF NOT EXISTS 'KW';
+ALTER TYPE "CountryCode" ADD VALUE IF NOT EXISTS 'QA';
+ALTER TYPE "CountryCode" ADD VALUE IF NOT EXISTS 'BH';
+ALTER TYPE "CountryCode" ADD VALUE IF NOT EXISTS 'OM';
+
+ALTER TYPE "JobType" ADD VALUE IF NOT EXISTS 'SYNC_YOUCAN_CATEGORIES';
