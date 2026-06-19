@@ -3,7 +3,7 @@ import { logEvent } from '@/lib/logger';
 import { OpenAICompatibleClient } from '@/lib/ai/openai-compatible';
 import { WebSearchResult } from '@/lib/search/web-search';
 import { validateImageUrls, dedupeImageUrlsByContent } from '@/lib/products/image-validation';
-import { ImageCandidate, reverseSearchImagesWithSerpApi, searchImagesWithBrightData, searchImagesWithSerpApi, shouldRejectCandidate } from '@/lib/products/image-search-providers';
+import { ImageCandidate, reverseSearchImagesWithSerpApi, searchImagesWithBrightData, searchImagesWithSerpApi, searchImagesWithSerper, shouldRejectCandidate } from '@/lib/products/image-search-providers';
 import { toJsonValue } from '@/lib/http/client';
 import { getOptionalConfig } from '@/lib/settings/config';
 
@@ -20,6 +20,7 @@ export async function selectAccurateProductImages(input: {
   rawName?: string | null;
   existingImageUrls: string[];
   searchResults: WebSearchResult[];
+  forceSearch?: boolean;
   ai?: OpenAICompatibleClient;
 }) {
   const env = await getOptionalConfig();
@@ -33,8 +34,19 @@ export async function selectAccurateProductImages(input: {
     .filter((url) => !codUrls.includes(url))
     .map((url) => ({ url, source: 'web_search' as const }));
 
-  let candidates: ImageCandidate[] = dedupeCandidates([...codCandidates, ...webSearchCandidates]).slice(0, maxCandidates);
+  let candidates: ImageCandidate[] = input.forceSearch ? [] : dedupeCandidates([...codCandidates, ...webSearchCandidates]).slice(0, maxCandidates);
   let validation = await validatePrioritizedCandidates(candidates, targetCount, maxCandidates);
+
+  if (validation.valid.length < targetCount) {
+    const serperImageCandidates = await searchImagesWithSerper({ query: searchQuery, max: maxCandidates, country: 'sa' });
+    candidates = dedupeCandidates([...candidates, ...serperImageCandidates]).slice(0, maxCandidates);
+    validation = await validatePrioritizedCandidates(candidates, targetCount, maxCandidates);
+  }
+
+  if (!input.forceSearch && validation.valid.length < targetCount) {
+    candidates = dedupeCandidates([...codCandidates, ...webSearchCandidates, ...candidates]).slice(0, maxCandidates);
+    validation = await validatePrioritizedCandidates(candidates, targetCount, maxCandidates);
+  }
 
   for (const codUrl of codUrls.slice(0, 3)) {
     if (validation.valid.length >= targetCount) break;
@@ -63,11 +75,13 @@ export async function selectAccurateProductImages(input: {
   }
 
   const validCandidates = validation.valid;
-  const selected = await selectWithAi({ ...input, candidates, validCandidates, targetCount, codReferenceUrl: codUrls[0] });
-  const supplemented = supplementSelectedImages(selected, validCandidates, targetCount, codUrls[0]);
+  const selected = await selectWithAi({ ...input, candidates, validCandidates, targetCount, codReferenceUrl: input.forceSearch ? undefined : codUrls[0] });
+  const referenceUrl = input.forceSearch ? undefined : codUrls[0];
+  const supplemented = supplementSelectedImages(selected, validCandidates, targetCount, referenceUrl);
   const finalValidation = await validateImageUrls(supplemented, { max: targetCount + 3, candidates: targetCount + 3 });
   const deduped = await dedupeImageUrlsByContent(finalValidation.valid, { max: targetCount });
-  const finalImages = prioritizeOriginalImages(deduped.unique, codUrls).slice(0, targetCount);
+  const originalPriorityUrls = input.forceSearch ? [] : codUrls;
+  const finalImages = prioritizeOriginalImages(deduped.unique, originalPriorityUrls).slice(0, targetCount);
 
   if (finalImages.length < REQUIRED_PRODUCT_IMAGE_COUNT) {
     await logEvent({
@@ -167,6 +181,10 @@ async function validatePrioritizedCandidates(candidates: ImageCandidate[], max: 
 function buildImageSearchQuery(input: { title: string; rawName?: string | null }) {
   const core = uniqueWords([input.rawName, input.title].filter(Boolean).join(' ')).slice(0, 10).join(' ');
   return `${core} product photos same item different angles`;
+}
+
+export function buildProductImageSearchQuery(input: { title: string; rawName?: string | null }) {
+  return buildImageSearchQuery(input);
 }
 
 function uniqueWords(value: string) {

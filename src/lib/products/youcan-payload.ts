@@ -14,6 +14,8 @@ export function buildYouCanProductPayload(input: {
   visible: boolean;
   appBaseUrl?: string | null;
   textButtonVariantType?: number;
+  quantityOptionName?: string | null;
+  singleQuantityLabel?: string | null;
   relatedProductIds?: string[];
 }): YouCanProductPayload {
   const price = Number(input.product.price ?? input.product.productCost ?? 0);
@@ -50,15 +52,17 @@ export function buildYouCanProductPayload(input: {
     };
   }
 
-  const optionName = arabicQuantityOptionName();
+  const optionName = input.quantityOptionName?.trim() || arabicQuantityOptionName();
+  const singleQuantityLabel = input.singleQuantityLabel?.trim() || arabicQuantityValue(1);
+  const quantityLabel = (rule: DiscountRule) => rule.label?.trim() || arabicQuantityValue(rule.quantity);
 
   return {
     ...basePayload,
     has_variants: true,
-    variant_options: [{ name: optionName, type: input.textButtonVariantType ?? TEXT_BUTTON_VARIANT_TYPE, values: [arabicQuantityValue(1), ...activeRules.map((rule) => arabicQuantityValue(rule.quantity))] }],
+    variant_options: [{ name: optionName, type: input.textButtonVariantType ?? TEXT_BUTTON_VARIANT_TYPE, values: [singleQuantityLabel, ...activeRules.map(quantityLabel)] }],
     variants: [
       {
-        variations: { [optionName]: arabicQuantityValue(1) },
+        variations: { [optionName]: singleQuantityLabel },
         price,
         sku: input.sku,
         inventory: input.product.stockQuantity ?? undefined,
@@ -67,7 +71,7 @@ export function buildYouCanProductPayload(input: {
         is_selected: true,
       },
       ...activeRules.map((rule) => ({
-        variations: { [optionName]: arabicQuantityValue(rule.quantity) },
+        variations: { [optionName]: quantityLabel(rule) },
         price: applyDiscount(price * rule.quantity, Number(rule.discountPercent)),
         sku: input.sku,
         inventory: input.product.stockQuantity ?? undefined,

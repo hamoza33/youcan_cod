@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
 import { SETTINGS, SETTINGS_BY_KEY } from '@/lib/settings/registry';
+import { arabicQuantityValue } from '@/lib/products/arabic-content';
 import { getSettingValue, upsertSettingValue } from '@/lib/settings/runtime';
 
 const SECRET_KEEP_VALUE = '__KEEP_SECRET__';
@@ -44,7 +45,7 @@ export async function saveDiscountRules(formData: FormData) {
       data: {
         quantity: Number(formData.get(`discount.${id}.quantity`) ?? 1),
         discountPercent: Number(formData.get(`discount.${id}.discountPercent`) ?? 0),
-        label: String(formData.get(`discount.${id}.label`) ?? '').trim() || `Buy ${formData.get(`discount.${id}.quantity`)}`,
+        label: String(formData.get(`discount.${id}.label`) ?? '').trim() || arabicQuantityValue(Number(formData.get(`discount.${id}.quantity`) ?? 1)),
         isActive: formData.get(`discount.${id}.isActive`) === 'true',
         sortOrder: Number(formData.get(`discount.${id}.sortOrder`) ?? 0),
       },
@@ -54,7 +55,7 @@ export async function saveDiscountRules(formData: FormData) {
   const newQuantity = Number(formData.get('discount.new.quantity') ?? 0);
   const newDiscountPercent = Number(formData.get('discount.new.discountPercent') ?? 0);
   if (newQuantity > 1 && Number.isFinite(newDiscountPercent) && newDiscountPercent >= 0) {
-    const label = String(formData.get('discount.new.label') ?? '').trim() || `Buy ${newQuantity}: ${newDiscountPercent}% off`;
+    const label = String(formData.get('discount.new.label') ?? '').trim() || arabicQuantityValue(newQuantity);
     await prisma.discountRule.create({
       data: {
         quantity: newQuantity,

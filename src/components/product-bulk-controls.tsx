@@ -114,6 +114,7 @@ export function ProductBulkControls({
                 <EyeOff className="h-4 w-4" /> Hide in YouCan
               </button>
               <button type="button" disabled={pending || !selected.length} onClick={() => runSelected('regenerate-seo')} className="rounded-2xl border px-3 py-2 font-semibold text-purple-700 disabled:opacity-50">Regenerate SEO</button>
+              <button type="button" disabled={pending || !selected.length} onClick={() => runSelected('regenerate-images')} className="rounded-2xl border px-3 py-2 font-semibold text-cyan-700 disabled:opacity-50">Regenerate images</button>
               <button type="button" disabled={pending || !selected.length} onClick={() => runSelected('import-youcan')} className="rounded-2xl border px-3 py-2 font-semibold text-blue-700 disabled:opacity-50">Re-import YouCan</button>
               <button type="button" disabled={pending || !selected.length} onClick={() => runSelected('push-gmc')} className="rounded-2xl border px-3 py-2 font-semibold text-emerald-700 disabled:opacity-50">Push GMC</button>
             </div>

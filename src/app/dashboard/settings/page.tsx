@@ -76,7 +76,7 @@ export default async function SettingsPage() {
 
           <form action={saveDiscountRules} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-soft">
             <h2 className="text-lg font-bold text-ink">Discount variant rules</h2>
-            <p className="mt-2 text-sm text-slate-500">Variant prices are recalculated from these rules whenever products are imported to YouCan.</p>
+            <p className="mt-2 text-sm text-slate-500">Variant prices are recalculated from these rules whenever products are imported to YouCan. The label field is the YouCan button text, e.g. قطعة واحدة, خمس قطع.</p>
             <div className="mt-4 space-y-3">
               {discounts.map((rule) => (
                 <div key={rule.id} className="rounded-2xl bg-slate-50 p-3 text-sm">
@@ -84,7 +84,7 @@ export default async function SettingsPage() {
                   <div className="grid gap-2 sm:grid-cols-2">
                     <input name={`discount.${rule.id}.quantity`} type="number" defaultValue={rule.quantity} className="input" />
                     <input name={`discount.${rule.id}.discountPercent`} type="number" step="0.01" defaultValue={String(rule.discountPercent)} className="input" />
-                    <input name={`discount.${rule.id}.label`} defaultValue={rule.label} className="input sm:col-span-2" />
+                    <input name={`discount.${rule.id}.label`} defaultValue={rule.label} placeholder="YouCan variant label, e.g. خمس قطع" className="input sm:col-span-2" />
                     <input name={`discount.${rule.id}.sortOrder`} type="number" defaultValue={rule.sortOrder} className="input" />
                     <select name={`discount.${rule.id}.isActive`} defaultValue={String(rule.isActive)} className="input">
                       <option value="true">Active</option>
@@ -98,7 +98,7 @@ export default async function SettingsPage() {
                 <div className="grid gap-2 sm:grid-cols-2">
                   <input name="discount.new.quantity" type="number" placeholder="Quantity" className="input" />
                   <input name="discount.new.discountPercent" type="number" step="0.01" placeholder="Discount %" className="input" />
-                  <input name="discount.new.label" placeholder="Label" className="input sm:col-span-2" />
+                  <input name="discount.new.label" placeholder="YouCan variant label, e.g. خمس قطع" className="input sm:col-span-2" />
                   <input name="discount.new.sortOrder" type="number" placeholder="Sort order" className="input sm:col-span-2" />
                 </div>
               </div>
