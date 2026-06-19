@@ -14,6 +14,7 @@ export function buildYouCanProductPayload(input: {
   visible: boolean;
   appBaseUrl?: string | null;
   textButtonVariantType?: number;
+  relatedProductIds?: string[];
 }): YouCanProductPayload {
   const price = Number(input.product.price ?? input.product.productCost ?? 0);
   const imageUrls = proxiedImageUrls(input.product, input.appBaseUrl);
@@ -36,6 +37,8 @@ export function buildYouCanProductPayload(input: {
     images: imageUrls.map((url, index) => ({ name: url, order: index + 1, type: 1 as const })),
     meta: { title: input.seo.metaTitle, description: input.seo.metaDescription, images: imageUrls },
     slug: input.seo.slug,
+    has_related_products: Boolean(input.relatedProductIds?.length),
+    related_products: input.relatedProductIds ?? [],
   };
 
   if (activeRules.length === 0) {

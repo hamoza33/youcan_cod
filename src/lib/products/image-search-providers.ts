@@ -5,7 +5,7 @@ import { getOptionalConfig } from '@/lib/settings/config';
 
 export type ImageCandidate = {
   url: string;
-  source: 'cod' | 'serpapi_lens' | 'brightdata_images' | 'web_search';
+  source: 'cod' | 'serpapi_lens' | 'serpapi_images' | 'brightdata_images' | 'web_search';
   title?: string;
   pageUrl?: string;
   domain?: string;
@@ -24,6 +24,21 @@ type SerpApiLensResponse = {
     image?: string;
     image_width?: number;
     image_height?: number;
+    thumbnail_width?: number;
+    thumbnail_height?: number;
+  }>;
+};
+
+type SerpApiImagesResponse = {
+  error?: string;
+  images_results?: Array<{
+    title?: string;
+    link?: string;
+    source?: string;
+    original?: string;
+    thumbnail?: string;
+    original_width?: number;
+    original_height?: number;
     thumbnail_width?: number;
     thumbnail_height?: number;
   }>;
@@ -87,6 +102,52 @@ export async function reverseSearchImagesWithSerpApi(input: {
       level: LogLevel.WARN,
       message: 'SerpApi Google Lens image search failed.',
       context: toJsonValue({ error: String(error), imageUrl: input.imageUrl }),
+    });
+    return [];
+  }
+}
+
+export async function searchImagesWithSerpApi(input: {
+  query: string;
+  max?: number;
+  country?: string;
+}) {
+  const env = await getOptionalConfig();
+  const apiKey = env.SERPAPI_API_KEY;
+  if (!apiKey || !input.query.trim()) return [];
+
+  const params = new URLSearchParams({
+    engine: 'google_images',
+    q: input.query,
+    api_key: apiKey,
+    output: 'json',
+    safe: 'active',
+    hl: 'en',
+    gl: input.country ?? 'sa',
+    ijn: '0',
+  });
+
+  try {
+    const response = await requestJson<SerpApiImagesResponse>(`https://serpapi.com/search?${params}`, {
+      source: LogSource.SEARCH,
+      retries: 2,
+      logContext: { provider: 'serpapi_google_images', query: input.query },
+    });
+    if (response.error) throw new Error(response.error);
+
+    return uniqueCandidates(
+      (response.images_results ?? []).flatMap((image) => [
+        candidate(image.original, 'serpapi_images', image),
+        candidate(image.thumbnail, 'serpapi_images', image, true),
+      ]),
+      input.max ?? 20,
+    );
+  } catch (error) {
+    await logEvent({
+      source: LogSource.SEARCH,
+      level: LogLevel.WARN,
+      message: 'SerpApi Google Images search failed.',
+      context: toJsonValue({ error: String(error), query: input.query }),
     });
     return [];
   }
@@ -157,8 +218,8 @@ function candidate(
     title: stringValue(metadata.title) ?? stringValue(metadata.image_alt),
     pageUrl: stringValue(metadata.link),
     domain: stringValue(metadata.source),
-    width: numberValue(thumbnail ? metadata.thumbnail_width : metadata.image_width ?? metadata.width),
-    height: numberValue(thumbnail ? metadata.thumbnail_height : metadata.image_height ?? metadata.height),
+    width: numberValue(thumbnail ? metadata.thumbnail_width : metadata.image_width ?? metadata.original_width ?? metadata.width),
+    height: numberValue(thumbnail ? metadata.thumbnail_height : metadata.image_height ?? metadata.original_height ?? metadata.height),
   };
 }
 
