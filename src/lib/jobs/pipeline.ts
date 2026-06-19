@@ -211,7 +211,7 @@ export async function importToYouCan(codProductId: string, options: { enqueueGmc
     const productForPayload = { ...importProduct, imageUrls: validation.validImageUrls, visibilityStatus: VisibilityStatus.VISIBLE };
     const env = await getOptionalConfig();
     const discountRules = await prisma.discountRule.findMany({ where: { isActive: true }, orderBy: { sortOrder: 'asc' } });
-    const relatedProductIds = await relatedYouCanProductIds(codProductId, category?.id ?? product.categoryId);
+    const relatedProductIds = await relatedYouCanProductIds(codProductId, category?.id ?? product.categoryId, category?.youCanCategoryId, product.mapping?.youCanProductId);
     const payload = buildYouCanProductPayload({
       product: productForPayload,
       sku,
@@ -284,7 +284,7 @@ async function enrichImagesForImport(product: { name: string; rawName: string | 
   return enriched.slice(0, 5);
 }
 
-async function relatedYouCanProductIds(codProductId: string, categoryId?: string | null) {
+async function relatedYouCanProductIds(codProductId: string, categoryId?: string | null, youCanCategoryId?: string | null, currentYouCanProductId?: string | null) {
   const baseWhere = {
     id: { not: codProductId },
     importStatus: ImportStatus.IMPORTED,
@@ -298,25 +298,42 @@ async function relatedYouCanProductIds(codProductId: string, categoryId?: string
       take: 3,
     })
     : [];
-  const fallbackProducts = sameCategoryProducts.length >= 3
-    ? []
-    : await prisma.codProduct.findMany({
+
+  let ids = sameCategoryProducts
+    .map((product) => product.mapping?.youCanProductId)
+    .filter((id): id is string => Boolean(id) && id !== currentYouCanProductId)
+    .slice(0, 3);
+
+  let fallbackCount = 0;
+  if (ids.length < 3 && youCanCategoryId) {
+    const youcan = await YouCanClient.create();
+    const remoteIds = await youcan.listProductIdsByCategory(youCanCategoryId, { limit: 100, maxPages: 3 });
+    const remoteFallbackIds = remoteIds.filter((id) => id !== currentYouCanProductId && !ids.includes(id)).slice(0, 3 - ids.length);
+    fallbackCount += remoteFallbackIds.length;
+    ids = [...ids, ...remoteFallbackIds];
+  }
+
+  if (ids.length < 3) {
+    const fallbackProducts = await prisma.codProduct.findMany({
       where: { ...baseWhere, id: { notIn: [codProductId, ...sameCategoryProducts.map((product) => product.id)] } },
       include: { mapping: true },
       orderBy: { updatedAt: 'desc' },
-      take: 3 - sameCategoryProducts.length,
+      take: 3 - ids.length,
     });
-  const ids = [...sameCategoryProducts, ...fallbackProducts]
-    .map((product) => product.mapping?.youCanProductId)
-    .filter((id): id is string => Boolean(id))
-    .slice(0, 3);
+    const localFallbackIds = fallbackProducts
+      .map((product) => product.mapping?.youCanProductId)
+      .filter((id): id is string => typeof id === 'string' && id !== currentYouCanProductId && !ids.includes(id));
+    fallbackCount += localFallbackIds.length;
+    ids = [...ids, ...localFallbackIds].slice(0, 3);
+  }
+
   if (sameCategoryProducts.length < 3) {
     await logEvent({
       source: LogSource.YOUCAN,
       level: LogLevel.WARN,
-      message: `Only ${sameCategoryProducts.length} same-category related product(s) available; using ${fallbackProducts.length} fallback imported product(s).`,
+      message: `Only ${sameCategoryProducts.length} local same-category related product(s) available; using ${fallbackCount} fallback product(s).`,
       codProductId,
-      context: toJsonValue({ categoryId, relatedProductIds: ids }),
+      context: toJsonValue({ categoryId, youCanCategoryId, relatedProductIds: ids }),
     });
   }
   return ids;

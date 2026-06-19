@@ -195,6 +195,13 @@ export class YouCanClient {
     return products.find((product) => productHasSku(product, normalizedSku));
   }
 
+  async listProductIdsByCategory(categoryId: string, params: { limit?: number; maxPages?: number } = {}) {
+    const products = await this.listProducts({ include: ['categories'], limit: params.limit ?? 100, maxPages: params.maxPages ?? 3 });
+    return products
+      .filter((product) => youCanProductCategories(product).some((category) => String(category.id) === categoryId))
+      .map((product) => product.id);
+  }
+
   async createProduct(payload: YouCanProductPayload) {
     const response = await this.post<YouCanProductResponse>(`${this.baseUrl}/products`, payload);
     return unwrapProduct(response, 'create product');
@@ -267,6 +274,15 @@ export function youCanProductPublicUrl(product: YouCanProduct, storeUrl?: string
   const slug = stringValue(product.slug) ?? fallbackSlug;
   if (!storeUrl || !slug) return undefined;
   return `${storeUrl.replace(/\/$/, '')}/products/${slug}`;
+}
+
+export function youCanProductCategories(product: YouCanProduct) {
+  const categories = (product as { categories?: unknown }).categories;
+  if (Array.isArray(categories)) return categories as Array<{ id?: string; slug?: string; name?: string }>;
+  if (categories && typeof categories === 'object' && Array.isArray((categories as { data?: unknown }).data)) {
+    return (categories as { data: Array<{ id?: string; slug?: string; name?: string }> }).data;
+  }
+  return [];
 }
 
 function unwrapProductList(response: YouCanListResponse) {
