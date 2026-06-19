@@ -15,6 +15,7 @@ import { externalProductLinks } from '@/lib/products/external-links';
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 type ProductListFilters = {
+  q?: string;
   country?: CountryCode;
   category?: string;
   stock?: StockStatus;
@@ -33,6 +34,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Sea
   const settings = await getRuntimeSettings();
   const enabledCountries = normalizeCountries(settingStringArray(settings, 'country.enabled'));
   const filters: ProductListFilters = {
+    q: stringFilter(params.q),
     country: enumFilter<CountryCode>(params.country, CountryCode),
     category: stringFilter(params.category),
     stock: enumFilter<StockStatus>(params.stock, StockStatus),
@@ -47,6 +49,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Sea
     seoStatus: filters.seo,
     importStatus: filters.importStatus,
     gmcStatus: filters.gmc,
+    OR: filters.q ? productSearchWhere(filters.q) : undefined,
   };
   const requestedPage = pageFilter(params.page);
   const totalProducts = await prisma.codProduct.count({ where: productWhere });
@@ -72,6 +75,12 @@ export default async function ProductsPage({ searchParams }: { searchParams: Sea
       />
 
       <form className="mb-4 grid gap-3 rounded-3xl border border-slate-200 bg-white p-4 shadow-soft md:grid-cols-3 xl:grid-cols-7">
+        <input
+          name="q"
+          defaultValue={filters.q ?? ''}
+          placeholder="Search name or SKU..."
+          className="rounded-2xl border border-slate-200 px-3 py-2 text-sm md:col-span-3 xl:col-span-2"
+        />
         <FilterSelect name="country" label="All GCC countries" values={Object.values(CountryCode)} defaultValue={filters.country} />
         <select name="category" defaultValue={filters.category ?? ''} className="rounded-2xl border border-slate-200 px-3 py-2 text-sm">
           <option value="">All categories</option>
@@ -268,6 +277,7 @@ function paginationItems(currentPage: number, totalPages: number): Array<number 
 
 function productsPageHref(filters: ProductListFilters, page: number) {
   const params = new URLSearchParams();
+  if (filters.q) params.set('q', filters.q);
   if (filters.country) params.set('country', filters.country);
   if (filters.category) params.set('category', filters.category);
   if (filters.stock) params.set('stock', filters.stock);
@@ -284,7 +294,18 @@ function enumFilter<T extends string>(value: unknown, enumObject: Record<string,
 }
 
 function stringFilter(value: unknown) {
-  return typeof value === 'string' && value ? value : undefined;
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function productSearchWhere(query: string): Prisma.CodProductWhereInput[] {
+  return [
+    { name: { contains: query, mode: 'insensitive' } },
+    { rawName: { contains: query, mode: 'insensitive' } },
+    { codSku: { contains: query, mode: 'insensitive' } },
+    { codProductId: { contains: query, mode: 'insensitive' } },
+    { mapping: { is: { codSku: { contains: query, mode: 'insensitive' } } } },
+    { seoMetadata: { is: { title: { contains: query, mode: 'insensitive' } } } },
+  ];
 }
 
 function pageFilter(value: unknown) {

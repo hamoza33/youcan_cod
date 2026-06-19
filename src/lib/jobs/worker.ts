@@ -1,7 +1,7 @@
 import { Worker } from 'bullmq';
 import { CountryCode, ImportStatus, JobStatus, JobType, LogLevel, LogSource, SeoStatus } from '@prisma/client';
 import { createRedisConnection, QUEUE_NAME, type AutomationJobData, type AutomationJobName } from '@/lib/jobs/queue';
-import { discoverCodProducts, enrichSeo, ensureCodSku, importToYouCan, pushToGmc, refreshGmcStatus, syncStock } from '@/lib/jobs/pipeline';
+import { discoverCodProducts, enrichSeo, ensureCodSku, importToYouCan, pushToGmc, refreshGmcStatus, regenerateProductImages, syncStock } from '@/lib/jobs/pipeline';
 import { syncYouCanCategories } from '@/lib/categories/youcan-sync';
 import { prisma } from '@/lib/db';
 import { logEvent } from '@/lib/logger';
@@ -11,6 +11,7 @@ const jobTypeMap: Record<AutomationJobName, JobType> = {
   'discover-cod-products': JobType.DISCOVER_COD_PRODUCTS,
   'ensure-cod-sku': JobType.ENSURE_COD_SKU,
   'enrich-seo': JobType.ENRICH_SEO,
+  'regenerate-images': JobType.BULK_EDIT,
   'import-youcan': JobType.IMPORT_YOUCAN,
   'push-gmc': JobType.PUSH_GMC,
   'sync-stock': JobType.SYNC_STOCK,
@@ -87,6 +88,9 @@ async function runAutomationJob(name: AutomationJobName, data: AutomationJobData
     case 'enrich-seo':
       if (!data.codProductId) throw new Error('codProductId is required');
       return enrichSeo(data.codProductId, data.force);
+    case 'regenerate-images':
+      if (!data.codProductId) throw new Error('codProductId is required');
+      return regenerateProductImages(data.codProductId);
     case 'import-youcan':
       if (!data.codProductId) throw new Error('codProductId is required');
       return importToYouCan(data.codProductId);

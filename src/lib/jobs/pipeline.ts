@@ -19,7 +19,7 @@ import { generateSeoMetadata } from '@/lib/seo/generator';
 import { type PricingFormula } from '@/lib/pricing/formula';
 import { codBasePrice, codProductCost, numeric } from '@/lib/products/cod-pricing';
 import { buildYouCanProductPayload } from '@/lib/products/youcan-payload';
-import { selectAccurateProductImages, REQUIRED_PRODUCT_IMAGE_COUNT } from '@/lib/products/image-enrichment';
+import { selectAccurateProductImages, REQUIRED_PRODUCT_IMAGE_COUNT, buildProductImageSearchQuery } from '@/lib/products/image-enrichment';
 import { validateBeforeYouCanImport, shouldMarkNeedsReview } from '@/lib/products/import-validation';
 import { ensureMappedCategory } from '@/lib/categories/youcan-sync';
 import { YouCanClient, youCanPrimaryVariantId, youCanProductPublicUrl } from '@/lib/integrations/youcan/client';
@@ -221,6 +221,8 @@ export async function importToYouCan(codProductId: string, options: { enqueueGmc
       visible: true,
       appBaseUrl: env.APP_BASE_URL,
       textButtonVariantType: Number(env.YOUCAN_TEXT_BUTTON_VARIANT_TYPE ?? 2),
+      quantityOptionName: await getSettingValue<string>('youCan.quantityOptionName').catch(() => undefined),
+      singleQuantityLabel: await getSettingValue<string>('youCan.singleQuantityLabel').catch(() => undefined),
       relatedProductIds,
     });
 
@@ -282,6 +284,45 @@ async function enrichImagesForImport(product: { name: string; rawName: string | 
     throw new Error(`Image enrichment failed: found ${enriched.length} valid exact product images, but at least ${REQUIRED_PRODUCT_IMAGE_COUNT} are required before importing to YouCan.`);
   }
   return enriched.slice(0, 5);
+}
+
+export async function regenerateProductImages(codProductId: string) {
+  const product = await prisma.codProduct.findUniqueOrThrow({
+    where: { id: codProductId },
+    include: { seoMetadata: true, mapping: true },
+  });
+  const search = new WebSearchClient();
+  const title = product.seoMetadata?.title ?? product.rawName ?? product.name;
+  const query = buildProductImageSearchQuery({ title, rawName: product.rawName });
+  const searchResults = await search.search(`${query} exact same product images`);
+  const regenerated = await selectAccurateProductImages({
+    title,
+    rawName: product.rawName,
+    existingImageUrls: product.imageUrls,
+    searchResults,
+    forceSearch: true,
+  });
+
+  if (regenerated.length < REQUIRED_PRODUCT_IMAGE_COUNT) {
+    throw new Error(`Image regeneration failed: found ${regenerated.length} valid exact product images, but at least ${REQUIRED_PRODUCT_IMAGE_COUNT} are required.`);
+  }
+
+  await prisma.codProduct.update({
+    where: { id: codProductId },
+    data: { imageUrls: regenerated.slice(0, 5), lastError: null },
+  });
+  await logEvent({
+    source: LogSource.SEARCH,
+    message: `Regenerated ${Math.min(regenerated.length, 5)} product image(s).`,
+    codProductId,
+    context: toJsonValue({ query, imageCount: regenerated.length }),
+  });
+
+  if (product.mapping?.youCanProductId) {
+    await enqueueJob('import-youcan', { codProductId, force: true });
+  }
+
+  return { imageCount: regenerated.length, images: regenerated.slice(0, 5) };
 }
 
 async function relatedYouCanProductIds(codProductId: string, categoryId?: string | null, youCanCategoryId?: string | null, currentYouCanProductId?: string | null) {
