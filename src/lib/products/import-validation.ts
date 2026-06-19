@@ -35,11 +35,9 @@ export async function validateBeforeYouCanImport(input: ImportValidationInput) {
     errors.push('YouCan textual button variant type is not configured correctly.');
   }
 
-  const validation = await validateImageUrls(product.imageUrls, { max: 5, candidates: 8 });
-  if (!validation.valid.length) {
-    errors.push('At least one valid product image is required.');
-  } else if (validation.valid.length < 4) {
-    warnings.push(`Only ${validation.valid.length} valid product image(s) found; target is 4-5 exact product images.`);
+  const validation = await validateImageUrls(product.imageUrls, { max: 5, candidates: 12 });
+  if (validation.valid.length < 4) {
+    errors.push(`At least 4 valid exact product images are required before YouCan import. Current valid image count: ${validation.valid.length}.`);
   }
 
   for (const warning of warnings) {

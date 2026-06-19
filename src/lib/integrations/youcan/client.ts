@@ -43,6 +43,8 @@ export type YouCanProductPayload = {
     images?: string[];
   };
   slug?: string;
+  has_related_products?: boolean;
+  related_products?: string[];
 };
 
 export type YouCanProduct = {
