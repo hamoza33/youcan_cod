@@ -1,0 +1,10 @@
+app.example.com {
+  encode gzip zstd
+  reverse_proxy 127.0.0.1:8124
+
+  header {
+    X-Content-Type-Options nosniff
+    X-Frame-Options DENY
+    Referrer-Policy strict-origin-when-cross-origin
+  }
+}

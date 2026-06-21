@@ -1,0 +1,336 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum CountryCode {
+  SA
+  AE
+  KW
+  QA
+  BH
+  OM
+}
+
+enum ProductSourceStatus {
+  DISCOVERED
+  ADDED_TO_ACCOUNT
+  SKU_CONFIRMED
+  OUT_OF_STOCK
+  DISABLED
+  ERROR
+}
+
+enum ImportStatus {
+  NOT_IMPORTED
+  QUEUED
+  IMPORTING
+  IMPORTED
+  UPDATED
+  SKIPPED_DUPLICATE
+  FAILED
+}
+
+enum SeoStatus {
+  MISSING
+  QUEUED
+  GENERATING
+  READY
+  NEEDS_REVIEW
+  FAILED
+}
+
+enum GmcStatus {
+  NOT_SUBMITTED
+  QUEUED
+  PENDING
+  APPROVED
+  DISAPPROVED
+  ERROR
+  EXCLUDED
+}
+
+enum StockStatus {
+  UNKNOWN
+  IN_STOCK
+  OUT_OF_STOCK
+}
+
+enum VisibilityStatus {
+  VISIBLE
+  HIDDEN
+}
+
+enum JobType {
+  DISCOVER_COD_PRODUCTS
+  ENSURE_COD_SKU
+  ENRICH_SEO
+  IMPORT_YOUCAN
+  PUSH_GMC
+  SYNC_STOCK
+  REFRESH_GMC_STATUS
+  SYNC_YOUCAN_CATEGORIES
+  BULK_EDIT
+}
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  RETRYING
+  CANCELLED
+}
+
+enum LogSource {
+  COD
+  YOUCAN
+  GMC
+  AI
+  SEARCH
+  SYNC
+  DASHBOARD
+  SYSTEM
+}
+
+enum LogLevel {
+  DEBUG
+  INFO
+  WARN
+  ERROR
+}
+
+enum SettingKind {
+  STRING
+  NUMBER
+  BOOLEAN
+  JSON
+  SECRET_REF
+}
+
+model Setting {
+  id          String      @id @default(cuid())
+  key         String      @unique
+  value       Json
+  kind        SettingKind @default(STRING)
+  description String?
+  isSecret    Boolean     @default(false)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+}
+
+model Category {
+  id                    String       @id @default(cuid())
+  name                  String
+  slug                  String       @unique
+  youCanCategoryId      String?
+  googleProductCategory String?
+  isActive              Boolean      @default(true)
+  sortOrder             Int          @default(0)
+  products              CodProduct[]
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+}
+
+model DiscountRule {
+  id              String   @id @default(cuid())
+  quantity        Int
+  discountPercent Decimal  @db.Decimal(6, 2)
+  label           String
+  isActive        Boolean  @default(true)
+  sortOrder       Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([quantity, discountPercent])
+}
+
+model CodProduct {
+  id                 String              @id @default(cuid())
+  codProductId       String
+  codDropProductId   String?
+  codSku             String?             @unique
+  country            CountryCode         @default(SA)
+  sourceStatus       ProductSourceStatus @default(DISCOVERED)
+  importStatus       ImportStatus        @default(NOT_IMPORTED)
+  seoStatus          SeoStatus           @default(MISSING)
+  stockStatus        StockStatus         @default(UNKNOWN)
+  visibilityStatus   VisibilityStatus    @default(VISIBLE)
+  gmcStatus          GmcStatus           @default(NOT_SUBMITTED)
+  name               String
+  rawName            String?
+  description        String?             @db.Text
+  rawDescription     String?             @db.Text
+  productCost        Decimal?            @db.Decimal(12, 2)
+  price              Decimal?            @db.Decimal(12, 2)
+  compareAtPrice     Decimal?            @db.Decimal(12, 2)
+  currency           String              @default("SAR")
+  stockQuantity      Int?
+  imageUrls          String[]            @default([])
+  rawPayload         Json?
+  lastCodSyncAt      DateTime?
+  lastYouCanSyncAt   DateTime?
+  lastGmcSyncAt      DateTime?
+  lastSeoGeneratedAt DateTime?
+  lastError          String?             @db.Text
+  categoryId         String?
+  category           Category?           @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  mapping            ProductMapping?
+  seoMetadata        SeoMetadata?
+  gmcSubmissions     GmcSubmission[]
+  jobs               ImportJob[]
+  logs               LogEvent[]
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  @@unique([codProductId, country])
+  @@index([country, importStatus])
+  @@index([stockStatus])
+  @@index([gmcStatus])
+}
+
+model ProductMapping {
+  id              String      @id @default(cuid())
+  codProductId    String      @unique
+  codProduct      CodProduct  @relation(fields: [codProductId], references: [id], onDelete: Cascade)
+  codSku          String      @unique
+  youCanProductId String?     @unique
+  youCanVariantId String?
+  youCanSlug      String?
+  youCanPublicUrl String?
+  googleProductId String?     @unique
+  googleOfferId   String?
+  googleFeedLabel String      @default("SA")
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+}
+
+model SeoMetadata {
+  id                String    @id @default(cuid())
+  codProductId      String    @unique
+  codProduct        CodProduct @relation(fields: [codProductId], references: [id], onDelete: Cascade)
+  productType       String?
+  useCase           String?   @db.Text
+  title             String
+  description       String    @db.Text
+  slug              String
+  metaTitle         String
+  metaDescription   String
+  keywords          String[]  @default([])
+  safeSellingPoints String[]  @default([])
+  categorySuggestion String?
+  complianceNotes   String?  @db.Text
+  sourceSummary     String?  @db.Text
+  aiProvider        String
+  aiModel           String
+  rawAiResponse     Json?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+
+model GmcSubmission {
+  id                String     @id @default(cuid())
+  codProductId      String
+  codProduct        CodProduct @relation(fields: [codProductId], references: [id], onDelete: Cascade)
+  offerId           String
+  productId         String?
+  accountId         String?
+  dataSourceId      String?
+  feedLabel         String     @default("SA")
+  contentLanguage   String     @default("ar")
+  status            GmcStatus  @default(PENDING)
+  payloadHash       String?
+  requestPayload    Json?
+  responsePayload   Json?
+  destinationStatuses Json?
+  issues            Json?
+  submittedAt       DateTime   @default(now())
+  checkedAt         DateTime?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  @@index([offerId])
+  @@index([status])
+}
+
+model ImportJob {
+  id            String    @id @default(cuid())
+  type          JobType
+  status        JobStatus @default(QUEUED)
+  codProductId  String?
+  codProduct    CodProduct? @relation(fields: [codProductId], references: [id], onDelete: SetNull)
+  attempts      Int       @default(0)
+  maxAttempts   Int       @default(3)
+  payload       Json?
+  result        Json?
+  error         String?   @db.Text
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([type, status])
+  @@index([codProductId])
+}
+
+model SyncRun {
+  id           String    @id @default(cuid())
+  type         JobType
+  status       JobStatus @default(QUEUED)
+  country      CountryCode @default(SA)
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  discovered   Int       @default(0)
+  imported     Int       @default(0)
+  updated      Int       @default(0)
+  failed       Int       @default(0)
+  result       Json?
+  error        String?   @db.Text
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model LogEvent {
+  id           String     @id @default(cuid())
+  source       LogSource
+  level        LogLevel   @default(INFO)
+  message      String     @db.Text
+  codProductId String?
+  codProduct   CodProduct? @relation(fields: [codProductId], references: [id], onDelete: SetNull)
+  context      Json?
+  createdAt    DateTime   @default(now())
+
+  @@index([source, level])
+  @@index([codProductId])
+  @@index([createdAt])
+}
+
+model ImageSearchApiKey {
+  id                    String    @id @default(cuid())
+  provider              String    @default("SERPAPI")
+  label                 String
+  apiKey                String    @unique
+  monthlyLimit          Int       @default(250)
+  monthlyUsage          Int       @default(0)
+  totalUsage            Int       @default(0)
+  resetMonth            String
+  remoteMonthlyLimit    Int?
+  remoteMonthlyUsage    Int?
+  remoteSearchesLeft    Int?
+  remoteTotalSearchesLeft Int?
+  remotePlanName        String?
+  remoteSyncedAt        DateTime?
+  isActive              Boolean   @default(true)
+  lastUsedAt            DateTime?
+  lastError             String?   @db.Text
+  lastErrorAt           DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([provider, isActive])
+  @@index([resetMonth])
+}
