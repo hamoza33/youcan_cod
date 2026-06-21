@@ -26,7 +26,6 @@ import { YouCanClient, youCanPrimaryVariantId, youCanProductPublicUrl } from '@/
 import { buildMerchantProductInput } from '@/lib/products/gmc-payload';
 import { GoogleMerchantClient } from '@/lib/integrations/google-merchant/client';
 import { getOptionalConfig } from '@/lib/settings/config';
-import { WebSearchClient } from '@/lib/search/web-search';
 import { getSettingValue } from '@/lib/settings/runtime';
 import { toJsonValue } from '@/lib/http/client';
 
@@ -271,14 +270,11 @@ export async function importToYouCan(codProductId: string, options: { enqueueGmc
 }
 
 async function enrichImagesForImport(product: { name: string; rawName: string | null; description: string | null; rawDescription: string | null; imageUrls: string[]; seoMetadata?: { title: string } | null }) {
-  const search = new WebSearchClient();
-  const query = [product.rawName ?? product.name, product.description ?? product.rawDescription].filter(Boolean).join(' ');
-  const searchResults = query ? await search.search(`${query} exact same product images`) : [];
   const enriched = await selectAccurateProductImages({
     title: product.seoMetadata?.title ?? product.rawName ?? product.name,
     rawName: product.rawName,
     existingImageUrls: product.imageUrls,
-    searchResults,
+    searchResults: [],
   });
   if (enriched.length < REQUIRED_PRODUCT_IMAGE_COUNT) {
     throw new Error(`Image enrichment failed: found ${enriched.length} valid exact product images, but at least ${REQUIRED_PRODUCT_IMAGE_COUNT} are required before importing to YouCan.`);
@@ -291,15 +287,13 @@ export async function regenerateProductImages(codProductId: string) {
     where: { id: codProductId },
     include: { seoMetadata: true, mapping: true },
   });
-  const search = new WebSearchClient();
   const title = product.seoMetadata?.title ?? product.rawName ?? product.name;
   const query = buildProductImageSearchQuery({ title, rawName: product.rawName });
-  const searchResults = await search.search(`${query} exact same product images`);
   const regenerated = await selectAccurateProductImages({
     title,
     rawName: product.rawName,
     existingImageUrls: product.imageUrls,
-    searchResults,
+    searchResults: [],
     forceSearch: true,
   });
 

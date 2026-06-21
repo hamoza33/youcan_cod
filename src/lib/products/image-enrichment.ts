@@ -3,7 +3,7 @@ import { logEvent } from '@/lib/logger';
 import { OpenAICompatibleClient } from '@/lib/ai/openai-compatible';
 import { WebSearchResult } from '@/lib/search/web-search';
 import { validateImageUrls, dedupeImageUrlsByContent } from '@/lib/products/image-validation';
-import { ImageCandidate, reverseSearchImagesWithSerpApi, searchImagesWithBrightData, searchImagesWithSerpApi, searchImagesWithSerper, shouldRejectCandidate } from '@/lib/products/image-search-providers';
+import { ImageCandidate, reverseSearchImagesWithSerpApi, searchImagesWithSerpApi, shouldRejectCandidate } from '@/lib/products/image-search-providers';
 import { toJsonValue } from '@/lib/http/client';
 import { getOptionalConfig } from '@/lib/settings/config';
 
@@ -37,12 +37,6 @@ export async function selectAccurateProductImages(input: {
   let candidates: ImageCandidate[] = input.forceSearch ? [] : dedupeCandidates([...codCandidates, ...webSearchCandidates]).slice(0, maxCandidates);
   let validation = await validatePrioritizedCandidates(candidates, targetCount, maxCandidates);
 
-  if (validation.valid.length < targetCount) {
-    const serperImageCandidates = await searchImagesWithSerper({ query: searchQuery, max: maxCandidates, country: 'sa' });
-    candidates = dedupeCandidates([...candidates, ...serperImageCandidates]).slice(0, maxCandidates);
-    validation = await validatePrioritizedCandidates(candidates, targetCount, maxCandidates);
-  }
-
   if (!input.forceSearch && validation.valid.length < targetCount) {
     candidates = dedupeCandidates([...codCandidates, ...webSearchCandidates, ...candidates]).slice(0, maxCandidates);
     validation = await validatePrioritizedCandidates(candidates, targetCount, maxCandidates);
@@ -65,12 +59,6 @@ export async function selectAccurateProductImages(input: {
   if (validation.valid.length < targetCount) {
     const serpImageCandidates = await searchImagesWithSerpApi({ query: searchQuery, max: maxCandidates, country: 'sa' });
     candidates = dedupeCandidates([...candidates, ...serpImageCandidates]).slice(0, maxCandidates);
-    validation = await validatePrioritizedCandidates(candidates, targetCount, maxCandidates);
-  }
-
-  if (validation.valid.length < targetCount) {
-    const brightDataCandidates = await searchImagesWithBrightData({ query: searchQuery, max: maxCandidates, country: 'sa' });
-    candidates = dedupeCandidates([...candidates, ...brightDataCandidates]).slice(0, maxCandidates);
     validation = await validatePrioritizedCandidates(candidates, targetCount, maxCandidates);
   }
 

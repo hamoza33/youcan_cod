@@ -5,6 +5,7 @@ import { prisma } from '@/lib/db';
 import { SETTINGS, SETTINGS_BY_KEY } from '@/lib/settings/registry';
 import { arabicQuantityValue } from '@/lib/products/arabic-content';
 import { getSettingValue, upsertSettingValue } from '@/lib/settings/runtime';
+import { syncAllSerpApiAccountUsage, syncSerpApiAccountUsage, usageMonth } from '@/lib/products/serpapi-key-pool';
 
 const SECRET_KEEP_VALUE = '__KEEP_SECRET__';
 
@@ -76,6 +77,57 @@ export async function readSecretSetting(key: string) {
   const definition = SETTINGS_BY_KEY.get(key);
   if (!definition?.isSecret) throw new Error('Only secret settings can be revealed this way.');
   return String(await getSettingValue(key) ?? '');
+}
+
+export async function addSerpApiKey(formData: FormData) {
+  const apiKey = String(formData.get('apiKey') ?? '').trim();
+  if (!apiKey) return;
+  const label = String(formData.get('label') ?? '').trim() || `SerpApi key ${await prisma.imageSearchApiKey.count({ where: { provider: 'SERPAPI' } }) + 1}`;
+  const monthlyLimit = normalizeMonthlyLimit(formData.get('monthlyLimit'));
+  await prisma.imageSearchApiKey.upsert({
+    where: { apiKey },
+    update: { label, monthlyLimit, isActive: true, lastError: null, lastErrorAt: null },
+    create: { provider: 'SERPAPI', label, apiKey, monthlyLimit, resetMonth: usageMonth(), isActive: true },
+  });
+  revalidatePath('/dashboard/settings');
+}
+
+export async function updateSerpApiKey(formData: FormData) {
+  const id = String(formData.get('id') ?? '');
+  if (!id) return;
+  await prisma.imageSearchApiKey.update({
+    where: { id },
+    data: {
+      label: String(formData.get('label') ?? '').trim() || 'SerpApi key',
+      monthlyLimit: normalizeMonthlyLimit(formData.get('monthlyLimit')),
+      isActive: formData.get('isActive') === 'true',
+    },
+  });
+  revalidatePath('/dashboard/settings');
+}
+
+export async function deleteSerpApiKey(formData: FormData) {
+  const id = String(formData.get('id') ?? '');
+  if (!id) return;
+  await prisma.imageSearchApiKey.delete({ where: { id } });
+  revalidatePath('/dashboard/settings');
+}
+
+export async function syncSerpApiKeyUsage(formData: FormData) {
+  const id = String(formData.get('id') ?? '');
+  if (id) {
+    await syncSerpApiAccountUsage(id).catch(async (error) => {
+      await prisma.imageSearchApiKey.update({ where: { id }, data: { lastError: String(error), lastErrorAt: new Date() } });
+    });
+  } else {
+    await syncAllSerpApiAccountUsage();
+  }
+  revalidatePath('/dashboard/settings');
+}
+
+function normalizeMonthlyLimit(value: FormDataEntryValue | null) {
+  const number = Number(value ?? 250);
+  return Number.isFinite(number) && number > 0 ? Math.round(number) : 250;
 }
 
 function parseJson(value: FormDataEntryValue | null, fallback: unknown) {
