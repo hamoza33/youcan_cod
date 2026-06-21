@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { prisma } from '@/lib/db';
 import { enqueueJob } from '@/lib/jobs/queue';
 import { roundMoney } from '@/lib/pricing/formula';
-import { CountryCode, VisibilityStatus } from '@prisma/client';
+import { CountryCode, ImportStatus, SeoStatus, VisibilityStatus } from '@prisma/client';
 
 const productIdSchema = z.string().min(1);
 
@@ -44,6 +44,37 @@ export async function triggerYouCanCategorySync() {
   await enqueueJob('sync-youcan-categories', {});
   revalidatePath('/dashboard/products');
   revalidatePath('/dashboard/settings');
+}
+
+const processBatchSchema = z.array(z.string().min(1)).min(1).max(50);
+
+export async function triggerProcessBatch(productIds: string[]) {
+  const ids = processBatchSchema.parse(productIds);
+  const products = await prisma.codProduct.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, codSku: true, seoStatus: true, importStatus: true },
+  });
+  const productById = new Map(products.map((product) => [product.id, product]));
+
+  await Promise.all(
+    ids.map(async (id) => {
+      const product = productById.get(id);
+      if (!product) return;
+      if (!product.codSku) {
+        await enqueueJob('ensure-cod-sku', { codProductId: id, force: true });
+        return;
+      }
+      if (product.seoStatus !== SeoStatus.READY) {
+        await enqueueJob('enrich-seo', { codProductId: id, force: true });
+        return;
+      }
+      if (product.importStatus !== ImportStatus.IMPORTED && product.importStatus !== ImportStatus.UPDATED) {
+        await enqueueJob('import-youcan', { codProductId: id, force: true });
+      }
+    }),
+  );
+
+  revalidatePath('/dashboard/products');
 }
 
 const updateProductSchema = z.object({
