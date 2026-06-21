@@ -12,7 +12,8 @@ import { getRuntimeSettings, settingString, settingStringArray } from '@/lib/set
 import { GCC_COUNTRY_CODES } from '@/lib/settings/registry';
 import { externalProductLinks } from '@/lib/products/external-links';
 
-type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+type RawSearchParams = Record<string, string | string[] | undefined>;
+type SearchParams = Promise<RawSearchParams>;
 
 type ProductListFilters = {
   q?: string;
@@ -65,20 +66,24 @@ export default async function ProductsPage({ searchParams }: { searchParams: Sea
   const categories = await prisma.category.findMany({ where: { isActive: true }, orderBy: { sortOrder: 'asc' } });
   const youCanStoreUrl = settingString(settings, 'youCan.storeUrl');
   const codTemplate = settingString(settings, 'codNetwork.productPageUrlTemplate');
+  const visibleProductIds = products.map((product) => product.id);
+  const activeFilterCount = activeFilters(filters);
 
   return (
     <>
       <PageHeader
         title="Imported products"
         description="Manage COD Network GCC discovery, account-specific SKU mapping, YouCan imports, SEO status, stock, visibility, and Google Merchant Center submissions."
-        actions={<ProductToolbar enabledCountries={enabledCountries} selectedCountry={filters.country} />}
+        actions={<ProductToolbar enabledCountries={enabledCountries} selectedCountry={filters.country} visibleProductIds={visibleProductIds} />}
       />
 
-      <form className="mb-4 grid gap-3 rounded-3xl border border-slate-200 bg-white p-4 shadow-soft md:grid-cols-3 xl:grid-cols-7">
+      <form action="/dashboard/products" className="mb-4 grid gap-3 rounded-3xl border border-slate-200 bg-white p-4 shadow-soft md:grid-cols-3 xl:grid-cols-8">
+        <input type="hidden" name="page" value="1" />
         <input
           name="q"
           defaultValue={filters.q ?? ''}
-          placeholder="Search name or SKU..."
+          aria-label="Search products"
+          placeholder="Search title, COD ID, SKU..."
           className="rounded-2xl border border-slate-200 px-3 py-2 text-sm md:col-span-3 xl:col-span-2"
         />
         <FilterSelect name="country" label="All GCC countries" values={Object.values(CountryCode)} defaultValue={filters.country} />
@@ -92,7 +97,12 @@ export default async function ProductsPage({ searchParams }: { searchParams: Sea
         <FilterSelect name="seo" label="All SEO" values={Object.values(SeoStatus)} defaultValue={filters.seo} />
         <FilterSelect name="import" label="All imports" values={Object.values(ImportStatus)} defaultValue={filters.importStatus} />
         <FilterSelect name="gmc" label="All GMC" values={Object.values(GmcStatus)} defaultValue={filters.gmc} />
-        <button className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white">Apply filters</button>
+        <div className="flex gap-2 md:col-span-3 xl:col-span-8">
+          <button className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white">Apply filters</button>
+          <Link href="/dashboard/products" className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+            Clear
+          </Link>
+        </div>
       </form>
 
       <ProductBulkControls products={products.map((product) => ({ id: product.id }))} categories={categories.map((category) => ({ id: category.id, name: category.name }))}>
@@ -164,7 +174,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Sea
             })}
             {products.length === 0 ? (
               <div className="px-4 py-12 text-center text-slate-500">
-                No products found. Choose one or more GCC countries and start discovery, or adjust the current filters.
+                {activeFilterCount ? 'No products match the current filters. Clear filters or broaden your search.' : 'No products imported yet. Choose one or more GCC countries and start discovery.'}
               </div>
             ) : null}
           </div>
@@ -220,6 +230,9 @@ function PaginationControls({
     <nav className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-slate-200 bg-white px-4 py-3 shadow-soft" aria-label="Products pagination">
       <p className="text-sm font-semibold text-slate-600">
         Showing {firstVisibleProduct}–{lastVisibleProduct} of {totalProducts} products · {pageSize} per page
+      </p>
+      <p className="text-xs font-semibold text-slate-500">
+        Page {currentPage} of {totalPages} · {activeFilters(filters) ? `${activeFilters(filters)} active filter${activeFilters(filters) === 1 ? '' : 's'}` : 'No filters applied'}
       </p>
       <div className="flex flex-wrap items-center gap-1.5">
         <PaginationLink page={currentPage - 1} filters={filters} disabled={currentPage <= 1}>Previous</PaginationLink>
@@ -304,6 +317,7 @@ function productSearchWhere(query: string): Prisma.CodProductWhereInput[] {
     { codSku: { contains: query, mode: 'insensitive' } },
     { codProductId: { contains: query, mode: 'insensitive' } },
     { mapping: { is: { codSku: { contains: query, mode: 'insensitive' } } } },
+    { mapping: { is: { youCanProductId: { contains: query, mode: 'insensitive' } } } },
     { seoMetadata: { is: { title: { contains: query, mode: 'insensitive' } } } },
   ];
 }
@@ -312,6 +326,10 @@ function pageFilter(value: unknown) {
   if (typeof value !== 'string') return 1;
   const page = Number(value);
   return Number.isInteger(page) && page > 0 ? page : 1;
+}
+
+function activeFilters(filters: ProductListFilters) {
+  return Object.values(filters).filter(Boolean).length;
 }
 
 function normalizeCountries(values: string[]) {
