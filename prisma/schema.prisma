@@ -308,3 +308,29 @@ model LogEvent {
   @@index([codProductId])
   @@index([createdAt])
 }
+
+model ImageSearchApiKey {
+  id                    String    @id @default(cuid())
+  provider              String    @default("SERPAPI")
+  label                 String
+  apiKey                String    @unique
+  monthlyLimit          Int       @default(250)
+  monthlyUsage          Int       @default(0)
+  totalUsage            Int       @default(0)
+  resetMonth            String
+  remoteMonthlyLimit    Int?
+  remoteMonthlyUsage    Int?
+  remoteSearchesLeft    Int?
+  remoteTotalSearchesLeft Int?
+  remotePlanName        String?
+  remoteSyncedAt        DateTime?
+  isActive              Boolean   @default(true)
+  lastUsedAt            DateTime?
+  lastError             String?   @db.Text
+  lastErrorAt           DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([provider, isActive])
+  @@index([resetMonth])
+}
