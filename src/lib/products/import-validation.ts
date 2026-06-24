@@ -3,6 +3,7 @@ import { logEvent } from '@/lib/logger';
 import { isLikelyArabic } from '@/lib/products/arabic-content';
 import { validateImageUrls } from '@/lib/products/image-validation';
 import { TEXT_BUTTON_VARIANT_TYPE } from '@/lib/products/youcan-payload';
+import { isCleanCodSku } from '@/lib/products/sku';
 
 export type ImportValidationInput = {
   product: CodProduct & { seoMetadata: SeoMetadata | null; category: Category | null };
@@ -14,7 +15,7 @@ export async function validateBeforeYouCanImport(input: ImportValidationInput) {
   const warnings: string[] = [];
   const { product, sku } = input;
 
-  if (!sku || sku.trim() !== sku || /\s|x\d|قطعة|قطع|اشتري|-/i.test(sku.replace(/^MP-/, ''))) {
+  if (!isCleanCodSku(sku)) {
     errors.push('Variant/product SKU must be the clean COD SKU only.');
   }
   if (!product.codSku) errors.push('Product must be added to COD seller list and have a confirmed COD SKU before YouCan import.');

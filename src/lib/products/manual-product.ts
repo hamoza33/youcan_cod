@@ -2,6 +2,7 @@ import { CountryCode, ProductSourceStatus, SeoStatus, StockStatus, VisibilitySta
 import { prisma } from '@/lib/db';
 import { calculatePrice } from '@/lib/pricing/formula';
 import { normalizeSlug } from '@/lib/seo/generator';
+import { requireCleanCodSku } from '@/lib/products/sku';
 import { toJsonValue } from '@/lib/http/client';
 
 export type ManualProductInput = {
@@ -34,7 +35,7 @@ export type ManualProductInput = {
 };
 
 export async function upsertManualProduct(input: ManualProductInput) {
-  const codSku = normalizeRequired(input.codSku, 'codSku');
+  const codSku = requireCleanCodSku(input.codSku, 'Manual product codSku');
   const name = normalizeRequired(input.name, 'name');
   const codProductId = input.codProductId?.trim() || `manual-${codSku}`;
   const currency = input.currency?.trim() || 'SAR';

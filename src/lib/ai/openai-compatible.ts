@@ -1,22 +1,13 @@
 import { LogSource } from '@prisma/client';
 import { requestJson } from '@/lib/http/client';
 import { getConfig } from '@/lib/settings/config';
-
-export type ChatMessage = {
-  role: 'system' | 'user' | 'assistant';
-  content:
-    | string
-    | Array<
-        | { type: 'text'; text: string }
-        | { type: 'image_url'; image_url: { url: string } }
-      >;
-};
+import { type AiChatClient, type ChatMessage, extractJson } from '@/lib/ai/types';
 
 export type ChatCompletionResponse = {
   choices?: Array<{ message?: { content?: string } }>;
 };
 
-export class OpenAICompatibleClient {
+export class OpenAICompatibleClient implements AiChatClient {
   readonly providerName: string;
   readonly model: string;
   private readonly baseUrl: string;
@@ -52,7 +43,7 @@ export class OpenAICompatibleClient {
 
   async chat(messages: ChatMessage[]) {
     if (!this.apiKey) {
-      throw new Error('AI_API_KEY is missing. Configure the DuckCoding/OpenAI-compatible API key before AI enrichment.');
+      throw new Error('OpenAI-compatible API key is missing. Configure AI_API_KEY or the dashboard OpenAI-compatible key before AI enrichment.');
     }
 
     const response = await requestJson<ChatCompletionResponse>(`${this.baseUrl}/v1/chat/completions`, {
@@ -67,18 +58,9 @@ export class OpenAICompatibleClient {
     });
 
     const content = response.choices?.[0]?.message?.content;
-    if (!content) throw new Error('AI provider returned an empty response.');
+    if (!content) throw new Error('OpenAI-compatible provider returned an empty response.');
     return content;
   }
 }
 
-function extractJson(value: string) {
-  const trimmed = value.trim();
-  if (trimmed.startsWith('{') || trimmed.startsWith('[')) return trimmed;
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenced?.[1]) return fenced[1].trim();
-  const firstObject = trimmed.indexOf('{');
-  const lastObject = trimmed.lastIndexOf('}');
-  if (firstObject >= 0 && lastObject > firstObject) return trimmed.slice(firstObject, lastObject + 1);
-  return trimmed;
-}
+export type { ChatMessage } from '@/lib/ai/types';
