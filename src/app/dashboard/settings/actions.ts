@@ -6,6 +6,7 @@ import { SETTINGS, SETTINGS_BY_KEY } from '@/lib/settings/registry';
 import { arabicQuantityValue } from '@/lib/products/arabic-content';
 import { getSettingValue, upsertSettingValue } from '@/lib/settings/runtime';
 import { syncAllSerpApiAccountUsage, syncSerpApiAccountUsage, usageMonth } from '@/lib/products/serpapi-key-pool';
+import { testAiProvider } from '@/lib/ai/provider-chain';
 
 const SECRET_KEEP_VALUE = '__KEEP_SECRET__';
 
@@ -123,6 +124,37 @@ export async function syncSerpApiKeyUsage(formData: FormData) {
     await syncAllSerpApiAccountUsage();
   }
   revalidatePath('/dashboard/settings');
+}
+
+export async function testAiProviderAction(providerInput: 'openai' | 'anthropic' | 'chain') {
+  const provider = providerInput === 'openai' || providerInput === 'anthropic' || providerInput === 'chain' ? providerInput : 'chain';
+  try {
+    const result = await testAiProvider(provider);
+    await prisma.logEvent.create({
+      data: {
+        source: 'AI',
+        level: 'INFO',
+        message: `AI provider test succeeded for ${provider}.`,
+        context: { result },
+      },
+    });
+    revalidatePath('/dashboard/settings');
+    revalidatePath('/dashboard/logs');
+    return { ...result, ok: true as const };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await prisma.logEvent.create({
+      data: {
+        source: 'AI',
+        level: 'ERROR',
+        message: `AI provider test failed for ${provider}.`,
+        context: { error: message },
+      },
+    });
+    revalidatePath('/dashboard/settings');
+    revalidatePath('/dashboard/logs');
+    return { ok: false as const, provider, error: message };
+  }
 }
 
 function normalizeMonthlyLimit(value: FormDataEntryValue | null) {

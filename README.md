@@ -84,6 +84,28 @@ http://localhost:3000/dashboard/products
 - `/dashboard/settings` — country, pricing formula, discount rules summary, AI provider/model, GMC defaults, and secret checklist.
 - `/dashboard/logs` — import, sync, YouCan, GMC, AI, search, dashboard, and system logs.
 
+## Dashboard click/action documentation
+
+Detailed GitHub documentation for every dashboard click, button, filter, pagination control, bulk action, row action, settings action, and recovery flow is in:
+
+```text
+docs/dashboard-actions.md
+```
+
+This includes what each click triggers locally, which background jobs run, and what is sent to COD Network, YouCan, SerpApi, AI providers, and Google Merchant Center.
+
+## AI provider fallback and tests
+
+The app supports both an OpenAI-compatible provider and an Anthropic-compatible provider.
+
+- Configure OpenAI-compatible settings with `AI_PROVIDER_NAME`, `AI_BASE_URL`, `AI_API_KEY`, and `AI_MODEL`.
+- Configure Anthropic-compatible settings with `ANTHROPIC_PROVIDER_NAME`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, and `ANTHROPIC_MODEL`.
+- Control automatic fallback order with `AI_PROVIDER_ORDER`, for example:
+  - `openai,anthropic`
+  - `anthropic,openai`
+- The Settings page has test buttons for OpenAI-compatible, Anthropic-compatible, and the full fallback chain.
+- SEO generation and AI-assisted image selection use the fallback chain, so if the first provider fails, the next configured provider is tried automatically.
+
 ## Automation flow
 
 1. `discover-cod-products`
@@ -138,6 +160,22 @@ npm run import:single
 ```
 
 The script upserts a local product, creates fallback SEO metadata, imports/updates YouCan using SKU duplicate protection, and prints `youCanPublicUrl`. Set `PRODUCT_PUSH_GMC=true` only when Google Merchant credentials are configured.
+
+## Recover failed products and import them to YouCan
+
+To list every product with an error or failed status without changing anything:
+
+```bash
+npm run recover:failed-products -- --dry-run
+```
+
+To apply automatic fixes and retry imports:
+
+```bash
+npm run recover:failed-products
+```
+
+The recovery command classifies each product, explains the cause, applies safe fixes where possible, and prints a JSON report. The main automatic fix for the YouCan validation error is ensuring the product SKU and every variant SKU are exactly the clean COD seller SKU only. Errors that require business input, such as missing category mapping, missing credentials, or not enough exact product images, are reported with the manual action required.
 
 The authenticated API equivalent is:
 

@@ -1,6 +1,7 @@
 import { LogLevel, LogSource } from '@prisma/client';
 import { logEvent } from '@/lib/logger';
-import { OpenAICompatibleClient } from '@/lib/ai/openai-compatible';
+import { AiProviderChain } from '@/lib/ai/provider-chain';
+import { type AiChatClient } from '@/lib/ai/types';
 import { WebSearchResult } from '@/lib/search/web-search';
 import { validateImageUrls, dedupeImageUrlsByContent } from '@/lib/products/image-validation';
 import { ImageCandidate, reverseSearchImagesWithSerpApi, searchImagesWithSerpApi, shouldRejectCandidate } from '@/lib/products/image-search-providers';
@@ -21,7 +22,7 @@ export async function selectAccurateProductImages(input: {
   existingImageUrls: string[];
   searchResults: WebSearchResult[];
   forceSearch?: boolean;
-  ai?: OpenAICompatibleClient;
+  ai?: AiChatClient;
 }) {
   const env = await getOptionalConfig();
   const targetCount = numberSetting(env.IMAGE_ENRICHMENT_TARGET_COUNT, 5, REQUIRED_PRODUCT_IMAGE_COUNT, 5);
@@ -101,13 +102,13 @@ async function selectWithAi(input: {
   validCandidates: string[];
   targetCount: number;
   codReferenceUrl?: string;
-  ai?: OpenAICompatibleClient;
+  ai?: AiChatClient;
 }) {
   const fallback = prioritizeOriginalImages(input.validCandidates, input.codReferenceUrl ? [input.codReferenceUrl] : []).slice(0, input.targetCount);
   if (input.validCandidates.length <= 1) return fallback;
 
   try {
-    const ai = input.ai ?? await OpenAICompatibleClient.create();
+    const ai = input.ai ?? await AiProviderChain.create();
     const metadataByUrl = new Map(input.candidates.map((candidate) => [candidate.url, candidate]));
     const result = await ai.chatJson<SelectedImageResult>(
       [
