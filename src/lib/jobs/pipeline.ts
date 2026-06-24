@@ -6,6 +6,7 @@ import {
   JobType,
   LogLevel,
   LogSource,
+  Prisma,
   ProductSourceStatus,
   SeoStatus,
   StockStatus,
@@ -21,6 +22,7 @@ import { codBasePrice, codProductCost, numeric } from '@/lib/products/cod-pricin
 import { buildYouCanProductPayload } from '@/lib/products/youcan-payload';
 import { selectAccurateProductImages, REQUIRED_PRODUCT_IMAGE_COUNT, buildProductImageSearchQuery } from '@/lib/products/image-enrichment';
 import { validateBeforeYouCanImport, shouldMarkNeedsReview } from '@/lib/products/import-validation';
+import { requireCleanCodSku } from '@/lib/products/sku';
 import { ensureMappedCategory } from '@/lib/categories/youcan-sync';
 import { YouCanClient, youCanPrimaryVariantId, youCanProductPublicUrl } from '@/lib/integrations/youcan/client';
 import { buildMerchantProductInput } from '@/lib/products/gmc-payload';
@@ -66,17 +68,22 @@ export async function discoverCodProducts(country: CountryCode = CountryCode.SA)
 export async function ensureCodSku(codProductId: string) {
   const product = await prisma.codProduct.findUniqueOrThrow({ where: { id: codProductId } });
   if (product.codSku) {
+    const cleanSku = requireCleanCodSku(product.codSku);
+    if (cleanSku !== product.codSku) {
+      await prisma.codProduct.update({ where: { id: codProductId }, data: { codSku: cleanSku } });
+    }
     await prisma.productMapping.upsert({
-      where: { codSku: product.codSku },
-      update: { codProductId, codSku: product.codSku },
-      create: { codProductId, codSku: product.codSku, googleOfferId: product.codSku },
+      where: { codSku: cleanSku },
+      update: { codProductId, codSku: cleanSku, googleOfferId: cleanSku },
+      create: { codProductId, codSku: cleanSku, googleOfferId: cleanSku },
     });
     await enqueueJob('enrich-seo', { codProductId });
-    return product.codSku;
+    return cleanSku;
   }
 
   const client = await CodNetworkClient.create();
   const result = await client.ensureSellerProduct((product.rawPayload ?? {}) as CodDropProduct);
+  const cleanSku = requireCleanCodSku(result.sku);
 
   const formula = await getPricingFormula();
   const sellerProduct = result.sellerProduct as Record<string, unknown>;
@@ -84,7 +91,7 @@ export async function ensureCodSku(codProductId: string) {
   await prisma.codProduct.update({
     where: { id: codProductId },
     data: {
-      codSku: result.sku,
+      codSku: cleanSku,
       sourceStatus: ProductSourceStatus.SKU_CONFIRMED,
       productCost: codProductCost(sellerProduct),
       price: codBasePrice(sellerProduct, formula),
@@ -98,14 +105,14 @@ export async function ensureCodSku(codProductId: string) {
   });
 
   await prisma.productMapping.upsert({
-    where: { codSku: result.sku },
-    update: { codProductId, codSku: result.sku },
-    create: { codProductId, codSku: result.sku, googleOfferId: result.sku },
+    where: { codSku: cleanSku },
+    update: { codProductId, codSku: cleanSku, googleOfferId: cleanSku },
+    create: { codProductId, codSku: cleanSku, googleOfferId: cleanSku },
   });
 
-  await logEvent({ source: LogSource.COD, message: `Confirmed COD SKU ${result.sku}`, codProductId });
+  await logEvent({ source: LogSource.COD, message: `Confirmed COD SKU ${cleanSku}`, codProductId });
   await enqueueJob('enrich-seo', { codProductId });
-  return result.sku;
+  return cleanSku;
 }
 
 export async function enrichSeo(codProductId: string, force = false) {
@@ -178,23 +185,19 @@ export async function importToYouCan(codProductId: string, options: { enqueueGmc
   if (!product.codSku) throw new Error('Cannot import to YouCan before COD SKU is confirmed.');
   if (!product.seoMetadata) throw new Error('Cannot import to YouCan before SEO metadata is generated.');
 
-  await prisma.codProduct.update({ where: { id: codProductId }, data: { importStatus: ImportStatus.IMPORTING, visibilityStatus: VisibilityStatus.VISIBLE } });
+  await prisma.codProduct.update({ where: { id: codProductId }, data: { importStatus: ImportStatus.IMPORTING } });
 
   try {
+    const sku = requireCleanCodSku(product.codSku);
     const category = product.category?.youCanCategoryId ? product.category : await ensureMappedCategory(product.seoMetadata.categorySuggestion);
     const enrichedImageUrls = await enrichImagesForImport(product);
-    product = await prisma.codProduct.update({
-      where: { id: codProductId },
-      data: {
-        categoryId: category?.id ?? product.categoryId,
-        imageUrls: enrichedImageUrls,
-        visibilityStatus: VisibilityStatus.VISIBLE,
-      },
-      include: { seoMetadata: true, category: true, mapping: true },
+    product = await updateProductForImport(codProductId, {
+      categoryId: category?.id ?? product.categoryId,
+      imageUrls: enrichedImageUrls,
+      codSku: sku,
     });
     const seo = product.seoMetadata;
-    const sku = product.codSku;
-    if (!seo || !sku) throw new Error('Cannot import to YouCan before COD SKU and SEO metadata are ready.');
+    if (!seo) throw new Error('Cannot import to YouCan before SEO metadata is ready.');
     const importProduct = { ...product, category: category ?? product.category, categoryId: category?.id ?? product.categoryId, seoMetadata: seo, codSku: sku };
     const validation = await validateBeforeYouCanImport({ product: importProduct, sku });
     if (!validation.ok) {
@@ -205,9 +208,9 @@ export async function importToYouCan(codProductId: string, options: { enqueueGmc
       throw new Error(`Pre-import validation failed: ${validation.errors.join(' | ')}`);
     }
     if (validation.validImageUrls.join('|') !== product.imageUrls.join('|')) {
-      product = await prisma.codProduct.update({ where: { id: codProductId }, data: { imageUrls: validation.validImageUrls }, include: { seoMetadata: true, category: true, mapping: true } });
+      product = await updateProductForImport(codProductId, { imageUrls: validation.validImageUrls });
     }
-    const productForPayload = { ...importProduct, imageUrls: validation.validImageUrls, visibilityStatus: VisibilityStatus.VISIBLE };
+    const productForPayload = { ...importProduct, imageUrls: validation.validImageUrls };
     const env = await getOptionalConfig();
     const discountRules = await prisma.discountRule.findMany({ where: { isActive: true }, orderBy: { sortOrder: 'asc' } });
     const relatedProductIds = await relatedYouCanProductIds(codProductId, category?.id ?? product.categoryId, category?.youCanCategoryId, product.mapping?.youCanProductId);
@@ -217,7 +220,7 @@ export async function importToYouCan(codProductId: string, options: { enqueueGmc
       seo,
       category,
       discountRules,
-      visible: true,
+      visible: product.visibilityStatus === VisibilityStatus.VISIBLE,
       appBaseUrl: env.APP_BASE_URL,
       textButtonVariantType: Number(env.YOUCAN_TEXT_BUTTON_VARIANT_TYPE ?? 2),
       quantityOptionName: await getSettingValue<string>('youCan.quantityOptionName').catch(() => undefined),
@@ -252,10 +255,10 @@ export async function importToYouCan(codProductId: string, options: { enqueueGmc
 
     await prisma.codProduct.update({
       where: { id: codProductId },
-      data: { importStatus: ImportStatus.IMPORTED, visibilityStatus: VisibilityStatus.VISIBLE, lastYouCanSyncAt: new Date(), lastError: null },
+      data: { importStatus: ImportStatus.IMPORTED, lastYouCanSyncAt: new Date(), lastError: null },
     });
 
-    await logEvent({ source: LogSource.YOUCAN, message: `Imported/updated YouCan product ${youcanProduct.id}`, codProductId, context: toJsonValue({ imageCount: validation.validImageUrls.length, visible: true, relatedProductIds }) });
+    await logEvent({ source: LogSource.YOUCAN, message: `Imported/updated YouCan product ${youcanProduct.id}`, codProductId, context: toJsonValue({ imageCount: validation.validImageUrls.length, visible: product.visibilityStatus === VisibilityStatus.VISIBLE, relatedProductIds }) });
     if ((options.enqueueGmc ?? true) && env.GOOGLE_MERCHANT_ENABLED === 'true') {
       await enqueueJob('push-gmc', { codProductId });
     }
@@ -267,6 +270,14 @@ export async function importToYouCan(codProductId: string, options: { enqueueGmc
     });
     throw error;
   }
+}
+
+async function updateProductForImport(codProductId: string, data: Prisma.CodProductUncheckedUpdateInput) {
+  return prisma.codProduct.update({
+    where: { id: codProductId },
+    data,
+    include: { seoMetadata: true, category: true, mapping: true },
+  });
 }
 
 async function enrichImagesForImport(product: { name: string; rawName: string | null; description: string | null; rawDescription: string | null; imageUrls: string[]; seoMetadata?: { title: string } | null }) {

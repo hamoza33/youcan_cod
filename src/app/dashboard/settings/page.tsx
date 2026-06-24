@@ -2,7 +2,9 @@ import { PageHeader } from '@/components/page-header';
 import { SettingField } from '@/components/setting-field';
 import { prisma } from '@/lib/db';
 import { addSerpApiKey, deleteSerpApiKey, saveCategories, saveDiscountRules, saveSettings, syncSerpApiKeyUsage, updateSerpApiKey } from '@/app/dashboard/settings/actions';
+import { AiProviderTestButtons } from '@/components/ai-provider-test-buttons';
 import { groupedSettings, SETTINGS } from '@/lib/settings/registry';
+import { parseAiProviderOrder } from '@/lib/ai/provider-order';
 import { ensureSettingDefaults, getRuntimeSettings } from '@/lib/settings/runtime';
 import { maskSerpApiKey } from '@/lib/products/serpapi-key-pool';
 import { formatDate } from '@/lib/utils';
@@ -53,6 +55,8 @@ export default async function SettingsPage() {
           </div>
 
           <SerpApiKeysPanel keys={serpApiKeys} />
+
+          <AiProviderTestPanel providerOrder={parseAiProviderOrder(String(values['ai.providerOrder'] ?? 'openai,anthropic'))} />
 
           <form action={saveCategories} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-soft">
             <h2 className="text-lg font-bold text-ink">Categories</h2>
@@ -113,6 +117,18 @@ export default async function SettingsPage() {
         </aside>
       </div>
     </>
+  );
+}
+
+function AiProviderTestPanel({ providerOrder }: { providerOrder: Array<'openai' | 'anthropic'> }) {
+  return (
+    <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-soft">
+      <h2 className="text-lg font-bold text-ink">AI provider tests</h2>
+      <p className="mt-2 text-sm leading-6 text-slate-500">
+        Test buttons send a tiny JSON request. Current fallback order: <span className="font-bold text-ink">{providerOrder.join(' → ')}</span>.
+      </p>
+      <AiProviderTestButtons />
+    </section>
   );
 }
 

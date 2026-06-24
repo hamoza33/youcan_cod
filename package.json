@@ -18,6 +18,7 @@
     "sync:once": "tsx scripts/sync-once.ts",
     "sync:youcan-categories": "tsx scripts/sync-youcan-categories.ts",
     "import:single": "tsx scripts/import-single-product.ts",
+    "recover:failed-products": "tsx scripts/recover-failed-products.ts",
     "check": "npm run typecheck && npm run lint && npm run build"
   },
   "dependencies": {
