@@ -13,7 +13,8 @@ export type AutomationJobName =
   | 'push-gmc'
   | 'sync-stock'
   | 'refresh-gmc-status'
-  | 'sync-youcan-categories';
+  | 'sync-youcan-categories'
+  | 'bulk-update-discount-variants';
 
 export type AutomationJobData = {
   codProductId?: string;
@@ -56,4 +57,28 @@ export async function enqueueJob(name: AutomationJobName, data: AutomationJobDat
   return automationQueue.add(name, data, {
     jobId: data.codProductId ? `${name}-${data.codProductId}${uniqueSuffix}` : `${name}-${Date.now()}`,
   });
+}
+
+export async function refreshStockSyncScheduler(input: { enabledCountries: Array<CountryCode | string>; intervalHours: number }) {
+  const automationQueue = getAutomationQueue();
+  const schedulerId = 'sync-stock-automatic';
+  if (!Number.isFinite(input.intervalHours) || input.intervalHours <= 0 || input.enabledCountries.length === 0) {
+    await automationQueue.removeJobScheduler(schedulerId).catch(() => false);
+    return { enabled: false, schedulerId };
+  }
+
+  const intervalMs = Math.max(1, Math.round(input.intervalHours)) * 60 * 60 * 1000;
+  await automationQueue.upsertJobScheduler(
+    schedulerId,
+    { every: intervalMs, immediately: false },
+    {
+      name: 'sync-stock',
+      data: { force: true },
+      opts: {
+        removeOnComplete: 200,
+        removeOnFail: 500,
+      },
+    },
+  );
+  return { enabled: true, schedulerId, intervalMs, countries: input.enabledCountries };
 }

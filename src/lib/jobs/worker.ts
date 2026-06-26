@@ -1,11 +1,11 @@
 import { Worker } from 'bullmq';
 import { CountryCode, ImportStatus, JobStatus, JobType, LogLevel, LogSource, SeoStatus } from '@prisma/client';
-import { createRedisConnection, QUEUE_NAME, type AutomationJobData, type AutomationJobName } from '@/lib/jobs/queue';
-import { discoverCodProducts, enrichSeo, ensureCodSku, importToYouCan, pushToGmc, refreshGmcStatus, regenerateProductImages, syncStock } from '@/lib/jobs/pipeline';
+import { createRedisConnection, QUEUE_NAME, refreshStockSyncScheduler, type AutomationJobData, type AutomationJobName } from '@/lib/jobs/queue';
+import { discoverCodProducts, enrichSeo, ensureCodSku, importToYouCan, pushToGmc, refreshGmcStatus, regenerateProductImages, syncStock, updateAllDiscountVariantsOnYouCan } from '@/lib/jobs/pipeline';
 import { syncYouCanCategories } from '@/lib/categories/youcan-sync';
 import { prisma } from '@/lib/db';
 import { logEvent } from '@/lib/logger';
-import { getSettingValue } from '@/lib/settings/runtime';
+import { getRuntimeSettings, getSettingValue, settingNumber, settingStringArray } from '@/lib/settings/runtime';
 
 const jobTypeMap: Record<AutomationJobName, JobType> = {
   'discover-cod-products': JobType.DISCOVER_COD_PRODUCTS,
@@ -17,9 +17,12 @@ const jobTypeMap: Record<AutomationJobName, JobType> = {
   'sync-stock': JobType.SYNC_STOCK,
   'refresh-gmc-status': JobType.REFRESH_GMC_STATUS,
   'sync-youcan-categories': JobType.SYNC_YOUCAN_CATEGORIES,
+  'bulk-update-discount-variants': JobType.BULK_EDIT,
 };
 
 async function startWorker() {
+  await configureStockSyncScheduler();
+
   const worker = new Worker<AutomationJobData, unknown, AutomationJobName>(
     QUEUE_NAME,
     async (job) => {
@@ -76,6 +79,15 @@ async function workerConcurrency() {
   return Math.max(1, await getSettingValue<number>('worker.concurrency').catch(() => Number(process.env.WORKER_CONCURRENCY ?? 4)));
 }
 
+async function configureStockSyncScheduler() {
+  const settings = await getRuntimeSettings().catch(() => ({}));
+  const enabledCountries = settingStringArray(settings, 'country.enabled') as CountryCode[];
+  const intervalHours = settingNumber(settings, 'sync.stockIntervalHours', 0);
+  await refreshStockSyncScheduler({ enabledCountries, intervalHours }).catch(async (error) => {
+    await logEvent({ source: LogSource.SYSTEM, level: LogLevel.ERROR, message: 'Failed to configure automatic Sync Stock scheduler', context: { error: String(error), intervalHours } });
+  });
+}
+
 async function runAutomationJob(name: AutomationJobName, data: AutomationJobData) {
   switch (name) {
     case 'discover-cod-products': {
@@ -104,6 +116,8 @@ async function runAutomationJob(name: AutomationJobName, data: AutomationJobData
       return refreshGmcStatus(data.codProductId);
     case 'sync-youcan-categories':
       return syncYouCanCategories();
+    case 'bulk-update-discount-variants':
+      return updateAllDiscountVariantsOnYouCan();
   }
 }
 

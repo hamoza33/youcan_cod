@@ -4,7 +4,8 @@ import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
 import { SETTINGS, SETTINGS_BY_KEY } from '@/lib/settings/registry';
 import { arabicQuantityValue } from '@/lib/products/arabic-content';
-import { getSettingValue, upsertSettingValue } from '@/lib/settings/runtime';
+import { getRuntimeSettings, getSettingValue, settingNumber, settingStringArray, upsertSettingValue } from '@/lib/settings/runtime';
+import { enqueueJob, refreshStockSyncScheduler } from '@/lib/jobs/queue';
 import { syncAllSerpApiAccountUsage, syncSerpApiAccountUsage, usageMonth } from '@/lib/products/serpapi-key-pool';
 import { testAiProvider } from '@/lib/ai/provider-chain';
 
@@ -17,6 +18,7 @@ export async function saveSettings(formData: FormData) {
     const value = definition.input === 'json' ? parseJson(rawValue as FormDataEntryValue | null, definition.defaultValue) : rawValue;
     await upsertSettingValue(definition.key, value ?? definition.defaultValue);
   }
+  await syncStockSchedulerFromSettings();
   revalidatePath('/dashboard/settings');
   revalidatePath('/dashboard/products');
 }
@@ -40,8 +42,26 @@ export async function saveCategories(formData: FormData) {
 }
 
 export async function saveDiscountRules(formData: FormData) {
+  await persistDiscountRules(formData);
+  revalidatePath('/dashboard/settings');
+  revalidatePath('/dashboard/products');
+}
+
+export async function triggerBulkDiscountVariantUpdate(formData: FormData) {
+  await persistDiscountRules(formData);
+  await enqueueJob('bulk-update-discount-variants', { force: true });
+  revalidatePath('/dashboard/settings');
+  revalidatePath('/dashboard/products');
+}
+
+async function persistDiscountRules(formData: FormData) {
   const ids = formData.getAll('discount.id').map(String);
+  const removeIds = new Set(formData.getAll('discount.remove').map(String));
   for (const id of ids) {
+    if (removeIds.has(id)) {
+      await prisma.discountRule.delete({ where: { id } }).catch(() => undefined);
+      continue;
+    }
     await prisma.discountRule.update({
       where: { id },
       data: {
@@ -70,8 +90,6 @@ export async function saveDiscountRules(formData: FormData) {
       await prisma.discountRule.updateMany({ where: { quantity: newQuantity }, data: { discountPercent: newDiscountPercent, label, isActive: true } });
     });
   }
-  revalidatePath('/dashboard/settings');
-  revalidatePath('/dashboard/products');
 }
 
 export async function readSecretSetting(key: string) {
@@ -160,6 +178,14 @@ export async function testAiProviderAction(providerInput: 'openai' | 'anthropic'
 function normalizeMonthlyLimit(value: FormDataEntryValue | null) {
   const number = Number(value ?? 250);
   return Number.isFinite(number) && number > 0 ? Math.round(number) : 250;
+}
+
+async function syncStockSchedulerFromSettings() {
+  const settings = await getRuntimeSettings();
+  await refreshStockSyncScheduler({
+    enabledCountries: settingStringArray(settings, 'country.enabled'),
+    intervalHours: settingNumber(settings, 'sync.stockIntervalHours', 0),
+  });
 }
 
 function parseJson(value: FormDataEntryValue | null, fallback: unknown) {

@@ -47,7 +47,7 @@ export function ProductToolbar({
         disabled={pending || countries.length === 0}
         onClick={() => startTransition(() => triggerStockSyncForCountries(countries))}
       >
-        <RefreshCw className="h-4 w-4" /> Sync {label} stock
+        <RefreshCw className="h-4 w-4" /> Sync Stock
       </button>
       <button
         type="button"

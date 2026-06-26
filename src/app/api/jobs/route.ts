@@ -5,7 +5,7 @@ import { enqueueJob } from '@/lib/jobs/queue';
 import { getSettingValue } from '@/lib/settings/runtime';
 
 const schema = z.object({
-  name: z.enum(['discover-cod-products', 'sync-stock', 'refresh-gmc-status', 'enrich-seo', 'import-youcan', 'push-gmc', 'ensure-cod-sku', 'sync-youcan-categories']),
+  name: z.enum(['discover-cod-products', 'sync-stock', 'refresh-gmc-status', 'enrich-seo', 'import-youcan', 'push-gmc', 'ensure-cod-sku', 'sync-youcan-categories', 'bulk-update-discount-variants']),
   codProductId: z.string().optional(),
   country: z.nativeEnum(CountryCode).optional(),
   force: z.boolean().optional(),

@@ -1,7 +1,7 @@
 import { PageHeader } from '@/components/page-header';
 import { SettingField } from '@/components/setting-field';
 import { prisma } from '@/lib/db';
-import { addSerpApiKey, deleteSerpApiKey, saveCategories, saveDiscountRules, saveSettings, syncSerpApiKeyUsage, updateSerpApiKey } from '@/app/dashboard/settings/actions';
+import { addSerpApiKey, deleteSerpApiKey, saveCategories, saveDiscountRules, saveSettings, syncSerpApiKeyUsage, triggerBulkDiscountVariantUpdate, updateSerpApiKey } from '@/app/dashboard/settings/actions';
 import { AiProviderTestButtons } from '@/components/ai-provider-test-buttons';
 import { groupedSettings, SETTINGS } from '@/lib/settings/registry';
 import { parseAiProviderOrder } from '@/lib/ai/provider-order';
@@ -84,8 +84,13 @@ export default async function SettingsPage() {
           </form>
 
           <form action={saveDiscountRules} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-soft">
-            <h2 className="text-lg font-bold text-ink">Discount variant rules</h2>
-            <p className="mt-2 text-sm text-slate-500">Variant prices are recalculated from these rules whenever products are imported to YouCan. The label field is the YouCan button text, e.g. قطعة واحدة, خمس قطع.</p>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-bold text-ink">Discount variant rules</h2>
+                <p className="mt-2 text-sm text-slate-500">Variant prices are recalculated from these rules whenever products are imported to YouCan. The label field is the YouCan button text, e.g. قطعة واحدة, خمس قطع.</p>
+              </div>
+              <button formAction={triggerBulkDiscountVariantUpdate} className="rounded-2xl bg-slate-900 px-4 py-2 text-xs font-bold text-white">Bulk update YouCan variants</button>
+            </div>
             <div className="mt-4 space-y-3">
               {discounts.map((rule) => (
                 <div key={rule.id} className="rounded-2xl bg-slate-50 p-3 text-sm">
@@ -99,6 +104,9 @@ export default async function SettingsPage() {
                       <option value="true">Active</option>
                       <option value="false">Inactive</option>
                     </select>
+                    <label className="inline-flex items-center gap-2 rounded-xl border border-rose-100 bg-white px-3 py-2 text-xs font-bold text-rose-700 sm:col-span-2">
+                      <input type="checkbox" name="discount.remove" value={rule.id} /> Remove this rule
+                    </label>
                   </div>
                 </div>
               ))}

@@ -47,6 +47,8 @@ export type YouCanProductPayload = {
   related_products?: string[];
 };
 
+export type YouCanProductUpdatePayload = Pick<YouCanProductPayload, 'name' | 'has_variants' | 'price'> & Partial<Omit<YouCanProductPayload, 'name' | 'has_variants' | 'price'>>;
+
 export type YouCanProduct = {
   id: string;
   name: string;
@@ -151,6 +153,13 @@ export class YouCanClient {
     return products;
   }
 
+  async getProduct(id: string, params: { include?: string[] } = {}) {
+    const search = new URLSearchParams();
+    if (params.include?.length) search.set('include', params.include.join(','));
+    const response = await this.get<YouCanProductResponse>(this.apiUrl(`/products/${id}${search.size ? `?${search}` : ''}`));
+    return unwrapProduct(response, 'get product');
+  }
+
   async listCategories(params: { page?: number; limit?: number; maxPages?: number } = {}) {
     const categories: YouCanCategory[] = [];
     const search = new URLSearchParams();
@@ -207,7 +216,7 @@ export class YouCanClient {
     return unwrapProduct(response, 'create product');
   }
 
-  async updateProduct(id: string, payload: YouCanProductPayload) {
+  async updateProduct(id: string, payload: YouCanProductUpdatePayload) {
     const response = await this.post<YouCanProductResponse>(`${this.baseUrl}/products/update/${id}`, payload);
     return unwrapProduct(response, 'update product');
   }
