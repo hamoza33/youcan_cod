@@ -2,6 +2,7 @@ import { Category, CodProduct, DiscountRule, SeoMetadata } from '@prisma/client'
 import { YouCanProductPayload } from '@/lib/integrations/youcan/client';
 import { applyDiscount } from '@/lib/pricing/formula';
 import { arabicQuantityOptionName, arabicQuantityValue, enforceArabicDescriptionLength } from '@/lib/products/arabic-content';
+import { requireCleanCodSku } from '@/lib/products/sku';
 
 export const TEXT_BUTTON_VARIANT_TYPE = Number(process.env.YOUCAN_TEXT_BUTTON_VARIANT_TYPE ?? 2);
 
@@ -14,7 +15,11 @@ export function buildYouCanProductPayload(input: {
   visible: boolean;
   appBaseUrl?: string | null;
   textButtonVariantType?: number;
+  quantityOptionName?: string | null;
+  singleQuantityLabel?: string | null;
+  relatedProductIds?: string[];
 }): YouCanProductPayload {
+  const cleanSku = requireCleanCodSku(input.sku);
   const price = Number(input.product.price ?? input.product.productCost ?? 0);
   const imageUrls = proxiedImageUrls(input.product, input.appBaseUrl);
   const activeRules = input.discountRules.filter((rule) => rule.isActive && rule.quantity > 1).sort((a, b) => a.quantity - b.quantity);
@@ -36,6 +41,8 @@ export function buildYouCanProductPayload(input: {
     images: imageUrls.map((url, index) => ({ name: url, order: index + 1, type: 1 as const })),
     meta: { title: input.seo.metaTitle, description: input.seo.metaDescription, images: imageUrls },
     slug: input.seo.slug,
+    has_related_products: Boolean(input.relatedProductIds?.length),
+    related_products: input.relatedProductIds ?? [],
   };
 
   if (activeRules.length === 0) {
@@ -43,30 +50,32 @@ export function buildYouCanProductPayload(input: {
       ...basePayload,
       has_variants: false,
       inventory: input.product.stockQuantity ?? undefined,
-      sku: input.sku,
+      sku: cleanSku,
     };
   }
 
-  const optionName = arabicQuantityOptionName();
+  const optionName = input.quantityOptionName?.trim() || arabicQuantityOptionName();
+  const singleQuantityLabel = input.singleQuantityLabel?.trim() || arabicQuantityValue(1);
+  const quantityLabel = (rule: DiscountRule) => rule.label?.trim() || arabicQuantityValue(rule.quantity);
 
   return {
     ...basePayload,
     has_variants: true,
-    variant_options: [{ name: optionName, type: input.textButtonVariantType ?? TEXT_BUTTON_VARIANT_TYPE, values: [arabicQuantityValue(1), ...activeRules.map((rule) => arabicQuantityValue(rule.quantity))] }],
+    variant_options: [{ name: optionName, type: input.textButtonVariantType ?? TEXT_BUTTON_VARIANT_TYPE, values: [singleQuantityLabel, ...activeRules.map(quantityLabel)] }],
     variants: [
       {
-        variations: { [optionName]: arabicQuantityValue(1) },
+        variations: { [optionName]: singleQuantityLabel },
         price,
-        sku: input.sku,
+        sku: cleanSku,
         inventory: input.product.stockQuantity ?? undefined,
         image: imageUrls[0],
         is_default: true,
         is_selected: true,
       },
       ...activeRules.map((rule) => ({
-        variations: { [optionName]: arabicQuantityValue(rule.quantity) },
+        variations: { [optionName]: quantityLabel(rule) },
         price: applyDiscount(price * rule.quantity, Number(rule.discountPercent)),
-        sku: input.sku,
+        sku: cleanSku,
         inventory: input.product.stockQuantity ?? undefined,
         image: imageUrls[0],
         is_default: false,

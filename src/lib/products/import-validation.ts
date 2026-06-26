@@ -3,6 +3,7 @@ import { logEvent } from '@/lib/logger';
 import { isLikelyArabic } from '@/lib/products/arabic-content';
 import { validateImageUrls } from '@/lib/products/image-validation';
 import { TEXT_BUTTON_VARIANT_TYPE } from '@/lib/products/youcan-payload';
+import { isCleanCodSku } from '@/lib/products/sku';
 
 export type ImportValidationInput = {
   product: CodProduct & { seoMetadata: SeoMetadata | null; category: Category | null };
@@ -14,7 +15,7 @@ export async function validateBeforeYouCanImport(input: ImportValidationInput) {
   const warnings: string[] = [];
   const { product, sku } = input;
 
-  if (!sku || sku.trim() !== sku || /\s|x\d|قطعة|قطع|اشتري|-/i.test(sku.replace(/^MP-/, ''))) {
+  if (!isCleanCodSku(sku)) {
     errors.push('Variant/product SKU must be the clean COD SKU only.');
   }
   if (!product.codSku) errors.push('Product must be added to COD seller list and have a confirmed COD SKU before YouCan import.');
@@ -35,11 +36,9 @@ export async function validateBeforeYouCanImport(input: ImportValidationInput) {
     errors.push('YouCan textual button variant type is not configured correctly.');
   }
 
-  const validation = await validateImageUrls(product.imageUrls, { max: 5, candidates: 8 });
-  if (!validation.valid.length) {
-    errors.push('At least one valid product image is required.');
-  } else if (validation.valid.length < 4) {
-    warnings.push(`Only ${validation.valid.length} valid product image(s) found; target is 4-5 exact product images.`);
+  const validation = await validateImageUrls(product.imageUrls, { max: 5, candidates: 12 });
+  if (validation.valid.length < 4) {
+    errors.push(`At least 4 valid exact product images are required before YouCan import. Current valid image count: ${validation.valid.length}.`);
   }
 
   for (const warning of warnings) {

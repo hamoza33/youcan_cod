@@ -8,6 +8,7 @@ export type AutomationJobName =
   | 'discover-cod-products'
   | 'ensure-cod-sku'
   | 'enrich-seo'
+  | 'regenerate-images'
   | 'import-youcan'
   | 'push-gmc'
   | 'sync-stock'
@@ -51,7 +52,8 @@ export function getAutomationQueue() {
 
 export async function enqueueJob(name: AutomationJobName, data: AutomationJobData = {}) {
   const automationQueue = getAutomationQueue();
+  const uniqueSuffix = data.force ? `-${Date.now()}` : '';
   return automationQueue.add(name, data, {
-    jobId: data.codProductId ? `${name}-${data.codProductId}` : `${name}-${Date.now()}`,
+    jobId: data.codProductId ? `${name}-${data.codProductId}${uniqueSuffix}` : `${name}-${Date.now()}`,
   });
 }

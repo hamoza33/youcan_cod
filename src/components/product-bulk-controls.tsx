@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useMemo, useState, useTransition } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, useTransition } from 'react';
 import { ChevronDown, ExternalLink, Eye, EyeOff, Percent, Tags } from 'lucide-react';
 import { bulkAction, toggleProductVisibility } from '@/app/dashboard/products/actions';
 
@@ -34,10 +34,16 @@ export function ProductBulkControls({
   const [categoryId, setCategoryId] = useState('');
   const [pending, startTransition] = useTransition();
   const selectedSet = useMemo(() => new Set(selected), [selected]);
+  const productIds = useMemo(() => products.map((product) => product.id), [products]);
   const allSelected = products.length > 0 && selected.length === products.length;
 
+  useEffect(() => {
+    const visibleIds = new Set(productIds);
+    setSelected((current) => current.filter((id) => visibleIds.has(id)));
+  }, [productIds]);
+
   function toggleAll() {
-    setSelected(allSelected ? [] : products.map((product) => product.id));
+    setSelected(allSelected ? [] : productIds);
   }
 
   function toggleOne(id: string) {
@@ -80,7 +86,7 @@ export function ProductBulkControls({
           <div className="flex flex-wrap items-center gap-3 text-sm">
             <label className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 px-3 py-2 font-semibold text-slate-700">
               <input type="checkbox" checked={allSelected} onChange={toggleAll} />
-              Select visible
+              Select visible page
             </label>
             <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">
               {selected.length} selected
@@ -108,6 +114,7 @@ export function ProductBulkControls({
                 <EyeOff className="h-4 w-4" /> Hide in YouCan
               </button>
               <button type="button" disabled={pending || !selected.length} onClick={() => runSelected('regenerate-seo')} className="rounded-2xl border px-3 py-2 font-semibold text-purple-700 disabled:opacity-50">Regenerate SEO</button>
+              <button type="button" disabled={pending || !selected.length} onClick={() => runSelected('regenerate-images')} className="rounded-2xl border px-3 py-2 font-semibold text-cyan-700 disabled:opacity-50">Regenerate images</button>
               <button type="button" disabled={pending || !selected.length} onClick={() => runSelected('import-youcan')} className="rounded-2xl border px-3 py-2 font-semibold text-blue-700 disabled:opacity-50">Re-import YouCan</button>
               <button type="button" disabled={pending || !selected.length} onClick={() => runSelected('push-gmc')} className="rounded-2xl border px-3 py-2 font-semibold text-emerald-700 disabled:opacity-50">Push GMC</button>
             </div>

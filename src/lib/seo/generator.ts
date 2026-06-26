@@ -1,7 +1,7 @@
 import slugify from 'slugify';
 import { Category, CodProduct } from '@prisma/client';
-import { OpenAICompatibleClient } from '@/lib/ai/openai-compatible';
-import { WebSearchClient } from '@/lib/search/web-search';
+import { AiProviderChain } from '@/lib/ai/provider-chain';
+import { type AiChatClient } from '@/lib/ai/types';
 import { countryLabel } from '@/lib/countries';
 import { enforceArabicDescriptionLength } from '@/lib/products/arabic-content';
 import { selectAccurateProductImages } from '@/lib/products/image-enrichment';
@@ -27,13 +27,10 @@ export type SeoGenerationResult = {
 export async function generateSeoMetadata(input: {
   product: CodProduct;
   categories: Category[];
-  ai?: OpenAICompatibleClient;
-  search?: WebSearchClient;
+  ai?: AiChatClient;
 }): Promise<SeoGenerationResult & { aiProvider: string; aiModel: string; rawAiResponse: unknown }> {
-  const ai = input.ai ?? await OpenAICompatibleClient.create();
-  const search = input.search ?? new WebSearchClient();
-  const query = [input.product.rawName ?? input.product.name, input.product.description].filter(Boolean).join(' ');
-  const searchResults = query ? await search.search(`${query} exact same product same color same model multiple angle images marketplace`) : [];
+  const ai = input.ai ?? await AiProviderChain.create();
+  const searchResults: never[] = [];
   const ruleCategorySlug = categorizeProductByRules({
     name: input.product.name,
     rawName: input.product.rawName,

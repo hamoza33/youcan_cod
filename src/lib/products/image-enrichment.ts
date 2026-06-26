@@ -1,9 +1,10 @@
 import { LogLevel, LogSource } from '@prisma/client';
 import { logEvent } from '@/lib/logger';
-import { OpenAICompatibleClient } from '@/lib/ai/openai-compatible';
+import { AiProviderChain } from '@/lib/ai/provider-chain';
+import { type AiChatClient } from '@/lib/ai/types';
 import { WebSearchResult } from '@/lib/search/web-search';
 import { validateImageUrls, dedupeImageUrlsByContent } from '@/lib/products/image-validation';
-import { ImageCandidate, reverseSearchImagesWithSerpApi, searchImagesWithBrightData, shouldRejectCandidate } from '@/lib/products/image-search-providers';
+import { ImageCandidate, reverseSearchImagesWithSerpApi, searchImagesWithSerpApi, shouldRejectCandidate } from '@/lib/products/image-search-providers';
 import { toJsonValue } from '@/lib/http/client';
 import { getOptionalConfig } from '@/lib/settings/config';
 
@@ -13,82 +14,83 @@ export type SelectedImageResult = {
   notes: string;
 };
 
+export const REQUIRED_PRODUCT_IMAGE_COUNT = 4;
+
 export async function selectAccurateProductImages(input: {
   title: string;
   rawName?: string | null;
   existingImageUrls: string[];
   searchResults: WebSearchResult[];
-  ai?: OpenAICompatibleClient;
+  forceSearch?: boolean;
+  ai?: AiChatClient;
 }) {
   const env = await getOptionalConfig();
-  const targetCount = numberSetting(env.IMAGE_ENRICHMENT_TARGET_COUNT, 5, 4, 5);
-  const minimumCount = Math.min(4, targetCount);
+  const targetCount = numberSetting(env.IMAGE_ENRICHMENT_TARGET_COUNT, 5, REQUIRED_PRODUCT_IMAGE_COUNT, 5);
   const maxCandidates = numberSetting(env.IMAGE_ENRICHMENT_MAX_CANDIDATES, 35, 12, 60);
+  const searchQuery = buildImageSearchQuery(input);
 
-  const codReferenceUrl = uniqueUrls(input.existingImageUrls)[0];
-  const originalCandidates = codReferenceUrl ? [{ url: codReferenceUrl, source: 'cod' as const }] : [];
-  const excludedCodUrls = new Set(uniqueUrls(input.existingImageUrls).slice(1));
+  const codUrls = uniqueUrls(input.existingImageUrls);
+  const codCandidates = codUrls.map((url) => ({ url, source: 'cod' as const }));
   const webSearchCandidates = uniqueUrls(input.searchResults.flatMap((result) => result.imageUrls ?? []))
-    .filter((url) => !excludedCodUrls.has(url) && url !== codReferenceUrl)
+    .filter((url) => !codUrls.includes(url))
     .map((url) => ({ url, source: 'web_search' as const }));
 
-  let candidates: ImageCandidate[] = dedupeCandidates([...originalCandidates, ...webSearchCandidates]).slice(0, maxCandidates);
+  let candidates: ImageCandidate[] = input.forceSearch ? [] : dedupeCandidates([...codCandidates, ...webSearchCandidates]).slice(0, maxCandidates);
   let validation = await validatePrioritizedCandidates(candidates, targetCount, maxCandidates);
 
-  if (validation.valid.length < minimumCount && originalCandidates[0]?.url) {
-    const lensCandidates = await reverseSearchImagesWithSerpApi({
-      imageUrl: originalCandidates[0].url,
-      max: maxCandidates,
-    });
+  if (!input.forceSearch && validation.valid.length < targetCount) {
+    candidates = dedupeCandidates([...codCandidates, ...webSearchCandidates, ...candidates]).slice(0, maxCandidates);
+    validation = await validatePrioritizedCandidates(candidates, targetCount, maxCandidates);
+  }
+
+  for (const codUrl of codUrls.slice(0, 3)) {
+    if (validation.valid.length >= targetCount) break;
+    const lensCandidates = await reverseSearchImagesWithSerpApi({ imageUrl: codUrl, max: maxCandidates });
     candidates = dedupeCandidates([...candidates, ...lensCandidates]).slice(0, maxCandidates);
     validation = await validatePrioritizedCandidates(candidates, targetCount, maxCandidates);
   }
 
-  if (validation.valid.length < minimumCount && originalCandidates[0]?.url) {
-    const refinedLensCandidates = await reverseSearchImagesWithSerpApi({
-      imageUrl: originalCandidates[0].url,
-      query: buildImageSearchQuery(input),
-      max: maxCandidates,
-    });
+  for (const codUrl of codUrls.slice(0, 3)) {
+    if (validation.valid.length >= targetCount) break;
+    const refinedLensCandidates = await reverseSearchImagesWithSerpApi({ imageUrl: codUrl, query: searchQuery, max: maxCandidates });
     candidates = dedupeCandidates([...candidates, ...refinedLensCandidates]).slice(0, maxCandidates);
     validation = await validatePrioritizedCandidates(candidates, targetCount, maxCandidates);
   }
 
-  if (validation.valid.length < minimumCount) {
-    const brightDataCandidates = await searchImagesWithBrightData({
-      query: buildImageSearchQuery(input),
-      max: maxCandidates,
-      country: 'sa',
-    });
-    candidates = dedupeCandidates([...candidates, ...brightDataCandidates]).slice(0, maxCandidates);
+  if (validation.valid.length < targetCount) {
+    const serpImageCandidates = await searchImagesWithSerpApi({ query: searchQuery, max: maxCandidates, country: 'sa' });
+    candidates = dedupeCandidates([...candidates, ...serpImageCandidates]).slice(0, maxCandidates);
     validation = await validatePrioritizedCandidates(candidates, targetCount, maxCandidates);
   }
 
   const validCandidates = validation.valid;
-  const selected = await selectWithAi({ ...input, candidates, validCandidates, targetCount, codReferenceUrl });
-  const finalValidation = await validateImageUrls(selected, { max: targetCount + 3, candidates: targetCount + 3 });
+  const selected = await selectWithAi({ ...input, candidates, validCandidates, targetCount, codReferenceUrl: input.forceSearch ? undefined : codUrls[0] });
+  const referenceUrl = input.forceSearch ? undefined : codUrls[0];
+  const supplemented = supplementSelectedImages(selected, validCandidates, targetCount, referenceUrl);
+  const finalValidation = await validateImageUrls(supplemented, { max: targetCount + 3, candidates: targetCount + 3 });
   const deduped = await dedupeImageUrlsByContent(finalValidation.valid, { max: targetCount });
-  const finalImages = prioritizeOriginalImages(deduped.unique, codReferenceUrl ? [codReferenceUrl] : []).slice(0, targetCount);
+  const originalPriorityUrls = input.forceSearch ? [] : codUrls;
+  const finalImages = prioritizeOriginalImages(deduped.unique, originalPriorityUrls).slice(0, targetCount);
 
-  if (finalImages.length < minimumCount) {
+  if (finalImages.length < REQUIRED_PRODUCT_IMAGE_COUNT) {
     await logEvent({
       source: LogSource.SEARCH,
-      level: LogLevel.WARN,
-      message: `Only ${finalImages.length} exact valid product image(s) found; target is ${minimumCount}-${targetCount}.`,
+      level: LogLevel.ERROR,
+      message: `Image enrichment found only ${finalImages.length} exact valid product image(s); at least ${REQUIRED_PRODUCT_IMAGE_COUNT} are required before import.`,
       context: toJsonValue({
         title: input.title,
         rawName: input.rawName,
+        query: searchQuery,
         candidateCount: candidates.length,
         validCandidateCount: validCandidates.length,
         providers: providerCounts(candidates),
         duplicateImagesRemoved: deduped.duplicates.slice(0, 10),
-        excludedAdditionalCodImageCount: excludedCodUrls.size,
         validationErrors: validation.results.filter((result) => !result.ok).slice(0, 10),
       }),
     });
   }
 
-  return finalImages.length ? finalImages : (codReferenceUrl ? [codReferenceUrl] : uniqueUrls(input.existingImageUrls).slice(0, 1));
+  return finalImages;
 }
 
 async function selectWithAi(input: {
@@ -100,13 +102,13 @@ async function selectWithAi(input: {
   validCandidates: string[];
   targetCount: number;
   codReferenceUrl?: string;
-  ai?: OpenAICompatibleClient;
+  ai?: AiChatClient;
 }) {
   const fallback = prioritizeOriginalImages(input.validCandidates, input.codReferenceUrl ? [input.codReferenceUrl] : []).slice(0, input.targetCount);
   if (input.validCandidates.length <= 1) return fallback;
 
   try {
-    const ai = input.ai ?? await OpenAICompatibleClient.create();
+    const ai = input.ai ?? await AiProviderChain.create();
     const metadataByUrl = new Map(input.candidates.map((candidate) => [candidate.url, candidate]));
     const result = await ai.chatJson<SelectedImageResult>(
       [
@@ -134,7 +136,7 @@ async function selectWithAi(input: {
                 })),
                 searchEvidence: input.searchResults.map((result) => ({ title: result.title, url: result.url, snippet: result.snippet })).slice(0, 10),
                 requiredOutput: {
-                  selectedImageUrls: 'array of 1-5 URL strings. Use only validatedCandidates. Keep at most one COD image: the reference image. Prefer unique online images from different listings/angles that match the exact same product. Do not include different colors, variants, models, sizes, or bundles.',
+                  selectedImageUrls: 'array of 4-5 URL strings when exact matches exist. Use only validatedCandidates. Keep at most one COD reference image first. Prefer unique online images from different listings/angles that match the exact same product. Do not include different colors, variants, models, sizes, or bundles.',
                   rejectedImageUrls: 'optional array of URLs rejected as not exact product images',
                   notes: 'short reason for selected/rejected images',
                 },
@@ -162,12 +164,16 @@ async function selectWithAi(input: {
 
 async function validatePrioritizedCandidates(candidates: ImageCandidate[], max: number, maxCandidates: number) {
   const filtered = candidates.filter((candidate) => !shouldRejectCandidate(candidate)).slice(0, maxCandidates);
-  const validation = await validateImageUrls(filtered.map((candidate) => candidate.url), { max, candidates: maxCandidates });
-  return validation;
+  return validateImageUrls(filtered.map((candidate) => candidate.url), { max, candidates: maxCandidates });
 }
 
 function buildImageSearchQuery(input: { title: string; rawName?: string | null }) {
-  return uniqueWords([input.rawName, input.title, 'exact same product images different angles no color variant'].filter(Boolean).join(' ')).slice(0, 14).join(' ');
+  const core = uniqueWords([input.rawName, input.title].filter(Boolean).join(' ')).slice(0, 10).join(' ');
+  return `${core} product photos same item different angles`;
+}
+
+export function buildProductImageSearchQuery(input: { title: string; rawName?: string | null }) {
+  return buildImageSearchQuery(input);
 }
 
 function uniqueWords(value: string) {
@@ -192,6 +198,10 @@ function dedupeCandidates(candidates: ImageCandidate[]) {
     result.push(candidate);
   }
   return result;
+}
+
+function supplementSelectedImages(selected: string[], validCandidates: string[], targetCount: number, codReferenceUrl?: string) {
+  return prioritizeOriginalImages(uniqueUrls([...selected, ...validCandidates]), codReferenceUrl ? [codReferenceUrl] : []).slice(0, targetCount);
 }
 
 function prioritizeOriginalImages(urls: string[], originals: string[]) {

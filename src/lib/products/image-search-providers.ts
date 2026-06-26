@@ -1,11 +1,11 @@
 import { LogLevel, LogSource } from '@prisma/client';
-import { requestJson, toJsonValue } from '@/lib/http/client';
+import { toJsonValue } from '@/lib/http/client';
 import { logEvent } from '@/lib/logger';
-import { getOptionalConfig } from '@/lib/settings/config';
+import { requestSerpApiWithKeyPool } from '@/lib/products/serpapi-key-pool';
 
 export type ImageCandidate = {
   url: string;
-  source: 'cod' | 'serpapi_lens' | 'brightdata_images' | 'web_search';
+  source: 'cod' | 'serpapi_lens' | 'serpapi_images' | 'web_search';
   title?: string;
   pageUrl?: string;
   domain?: string;
@@ -29,21 +29,19 @@ type SerpApiLensResponse = {
   }>;
 };
 
-type BrightDataImagesResponse = {
-  images?: Array<{
+type SerpApiImagesResponse = {
+  error?: string;
+  images_results?: Array<{
     title?: string;
     link?: string;
     source?: string;
-    original_image?: string;
-    image?: string;
-    image_url?: string;
+    original?: string;
     thumbnail?: string;
-    image_alt?: string;
-    width?: number;
-    height?: number;
+    original_width?: number;
+    original_height?: number;
+    thumbnail_width?: number;
+    thumbnail_height?: number;
   }>;
-  organic?: Array<{ title?: string; link?: string; image?: string; thumbnail?: string }>;
-  error?: string;
 };
 
 export async function reverseSearchImagesWithSerpApi(input: {
@@ -51,28 +49,25 @@ export async function reverseSearchImagesWithSerpApi(input: {
   query?: string;
   max?: number;
 }) {
-  const env = await getOptionalConfig();
-  const apiKey = env.SERPAPI_API_KEY;
-  if (!apiKey) return [];
-
-  const params = new URLSearchParams({
-    engine: 'google_lens',
-    type: 'visual_matches',
-    url: input.imageUrl,
-    api_key: apiKey,
-    output: 'json',
-    safe: 'active',
-    auto_crop: 'true',
-  });
-  if (input.query) params.set('q', input.query);
-
   try {
-    const response = await requestJson<SerpApiLensResponse>(`https://serpapi.com/search?${params}`, {
-      source: LogSource.SEARCH,
-      retries: 2,
-      logContext: { provider: 'serpapi_google_lens' },
+    const response = await requestSerpApiWithKeyPool<SerpApiLensResponse>({
+      provider: 'serpapi_google_lens',
+      context: { imageUrl: input.imageUrl, query: input.query },
+      extractError: (payload) => payload.error,
+      buildUrl: (apiKey) => {
+        const params = new URLSearchParams({
+          engine: 'google_lens',
+          type: 'visual_matches',
+          url: input.imageUrl,
+          api_key: apiKey,
+          output: 'json',
+          safe: 'active',
+          auto_crop: 'true',
+        });
+        if (input.query) params.set('q', input.query);
+        return `https://serpapi.com/search?${params}`;
+      },
     });
-    if (response.error) throw new Error(response.error);
 
     return uniqueCandidates(
       (response.visual_matches ?? []).flatMap((match) => [
@@ -85,58 +80,52 @@ export async function reverseSearchImagesWithSerpApi(input: {
     await logEvent({
       source: LogSource.SEARCH,
       level: LogLevel.WARN,
-      message: 'SerpApi Google Lens image search failed.',
+      message: 'SerpApi Google Lens image search failed after cycling available keys.',
       context: toJsonValue({ error: String(error), imageUrl: input.imageUrl }),
     });
     return [];
   }
 }
 
-export async function searchImagesWithBrightData(input: {
+export async function searchImagesWithSerpApi(input: {
   query: string;
   max?: number;
   country?: string;
 }) {
-  const env = await getOptionalConfig();
-  const apiKey = env.BRIGHTDATA_API_KEY;
-  if (!apiKey) return [];
-
-  const zone = env.BRIGHTDATA_SERP_ZONE || 'serp_api1';
-  const searchUrl = `https://www.google.com/search?${new URLSearchParams({ q: input.query, udm: '2' })}`;
+  if (!input.query.trim()) return [];
 
   try {
-    const response = await requestJson<BrightDataImagesResponse>('https://api.brightdata.com/request', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        zone,
-        url: searchUrl,
-        format: 'json',
-        country: input.country ?? 'sa',
-      }),
-      source: LogSource.SEARCH,
-      retries: 2,
-      logContext: { provider: 'brightdata_google_images' },
+    const response = await requestSerpApiWithKeyPool<SerpApiImagesResponse>({
+      provider: 'serpapi_google_images',
+      context: { query: input.query, country: input.country ?? 'sa' },
+      extractError: (payload) => payload.error,
+      buildUrl: (apiKey) => {
+        const params = new URLSearchParams({
+          engine: 'google_images',
+          q: input.query,
+          api_key: apiKey,
+          output: 'json',
+          safe: 'active',
+          hl: 'en',
+          gl: input.country ?? 'sa',
+          ijn: '0',
+        });
+        return `https://serpapi.com/search?${params}`;
+      },
     });
-    if (response.error) throw new Error(response.error);
 
-    const imageCandidates = (response.images ?? []).flatMap((image) => [
-      candidate(image.original_image, 'brightdata_images', image),
-      candidate(image.image_url, 'brightdata_images', image),
-      candidate(image.image, 'brightdata_images', image),
-      candidate(image.thumbnail, 'brightdata_images', image, true),
-    ]);
-    const organicCandidates = (response.organic ?? []).flatMap((item) => [
-      candidate(item.image, 'brightdata_images', item),
-      candidate(item.thumbnail, 'brightdata_images', item, true),
-    ]);
-
-    return uniqueCandidates([...imageCandidates, ...organicCandidates], input.max ?? 20);
+    return uniqueCandidates(
+      (response.images_results ?? []).flatMap((image) => [
+        candidate(image.original, 'serpapi_images', image),
+        candidate(image.thumbnail, 'serpapi_images', image, true),
+      ]),
+      input.max ?? 20,
+    );
   } catch (error) {
     await logEvent({
       source: LogSource.SEARCH,
       level: LogLevel.WARN,
-      message: 'Bright Data Google Images search failed.',
+      message: 'SerpApi Google Images search failed after cycling available keys.',
       context: toJsonValue({ error: String(error), query: input.query }),
     });
     return [];
@@ -156,9 +145,9 @@ function candidate(
     source,
     title: stringValue(metadata.title) ?? stringValue(metadata.image_alt),
     pageUrl: stringValue(metadata.link),
-    domain: stringValue(metadata.source),
-    width: numberValue(thumbnail ? metadata.thumbnail_width : metadata.image_width ?? metadata.width),
-    height: numberValue(thumbnail ? metadata.thumbnail_height : metadata.image_height ?? metadata.height),
+    domain: stringValue(metadata.source) ?? stringValue(metadata.domain),
+    width: numberValue(thumbnail ? metadata.thumbnail_width ?? metadata.thumbnailWidth : metadata.image_width ?? metadata.original_width ?? metadata.imageWidth ?? metadata.width),
+    height: numberValue(thumbnail ? metadata.thumbnail_height ?? metadata.thumbnailHeight : metadata.image_height ?? metadata.original_height ?? metadata.imageHeight ?? metadata.height),
   };
 }
 
