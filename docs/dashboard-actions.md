@@ -624,3 +624,46 @@ Fix:
 - Review `/dashboard/logs` and the product detail page recent logs.
 - Fix the specific cause manually.
 - Retry row action `YouCan` or run the recovery script again.
+
+## Products page section navigation
+
+A sticky in-page navigator prevents the products dashboard from behaving like one long page:
+
+- **Actions** → top toolbar actions.
+- **Filters** → search and status/category filters.
+- **Selected / bulk** → selection count and bulk controls.
+- **Product list** → the current 50-row page.
+
+These are anchor links only and do not start jobs.
+
+## Detailed GMC indicator and status refresh
+
+Each product row derives its displayed Merchant state from the newest `GmcSubmission.destinationStatuses`, issue data, and response payload. Display states include `NOT SUBMITTED`, `QUEUED`, `PENDING`, `APPROVED`, `LIMITED`, `DISAPPROVED`, `ERROR`, and `EXCLUDED`. `LIMITED` is an operator-facing derived state, so no production database enum migration is required. The row also shows the latest check time and up to three issue summaries.
+
+### GMC status
+
+1. Click the row action **GMC status**.
+2. The server queues `refresh-gmc-status`; it does not call Google in the request.
+3. The worker reads the mapped Merchant product from the Merchant API.
+4. It persists the response, destination statuses, item-level issues, and `checkedAt` on matching `GmcSubmission` rows.
+5. It derives the accurate display state, writes the compatible legacy `CodProduct.gmcStatus`, and logs the detailed state.
+6. If no Google product mapping exists, the job reports that the product has not been submitted instead of performing a full import.
+
+## Percentage price-only action
+
+Control: signed `% price change (+ or −)` input with:
+
+- **Selected (N)** — applies to checked products on the current page.
+- **All filtered (N)** — applies to every product matching the current search, country, category, stock, SEO, import, and GMC filters across every page.
+
+What happens:
+
+1. The server validates a percentage from `-99` through `1000` and resolves the complete selected/filtered product set in PostgreSQL.
+2. Local base prices are updated in one transaction.
+3. One `sync-product-price` BullMQ job is queued per product; the server action performs no external writes.
+4. Each worker job fetches the existing YouCan product and variants, preserves their current required data, and changes only the product price and variant prices. Active quantity-discount rules recalculate corresponding variant prices.
+5. If the product has a GMC mapping, the worker calls Merchant API `productInputs.patch` using its configured API data source and `updateMask=productAttributes.price`.
+6. Description, images, SEO, category, visibility, inventory, stock, and unrelated product attributes are not rewritten.
+7. Missing YouCan or GMC mappings/submissions are written to `lastError` and logs. The job does not create/import a missing remote product and does not fall back to full YouCan/GMC submission.
+
+The older **Fixed base price** action retains its existing full YouCan re-import behavior; only the signed percentage operation is guaranteed price-only.

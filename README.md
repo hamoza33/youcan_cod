@@ -229,3 +229,26 @@ Ensure DNS for `app.example.com` points to `YOUR_VPS_IP`.
 6. GitHub repository target or permission to create/push one.
 7. VPS SSH authentication method and confirmation that Docker/Caddy/sudo are available.
 8. DNS confirmation for `app.example.com`.
+
+## Products dashboard action map
+
+The products page now has a sticky section navigator: **Actions → Filters → Selected / bulk → Product list**. Use it to jump between controls instead of scrolling through one long page.
+
+Exact toolbar button behavior:
+
+- **Discover SA catalog** → queues catalog discovery for Saudi Arabia; discovered products continue through SKU confirmation and the normal pipeline.
+- **Process visible 50** → queues the next required processing step for each product on the current 50-row page only.
+- **Sync Stock** → queues COD seller-stock synchronization for the selected/enabled countries.
+- **Sync YouCan categories** → reads YouCan categories and updates local category mappings.
+- **Bulk SEO** → jumps to selected/bulk actions; it does not run until products are selected and the bulk SEO action is clicked.
+- **Push GMC** → jumps to selected/bulk actions, where selected products can be queued for a full GMC submission.
+- **Import YouCan** → jumps to selected/bulk actions, where selected products can be queued for a full YouCan import/update.
+
+Each product displays a detailed GMC indicator derived from the latest Merchant API `destinationStatuses` and issues. It distinguishes **pending, approved, limited, disapproved, error, excluded, queued, and not submitted**, shows the last check time and an issue summary, and includes a **GMC status** row button to queue a fresh status read. `LIMITED` is derived for display without a risky database-enum migration.
+
+The expanded bulk panel includes a signed percentage price-only action with two scopes:
+
+- **Selected** → only checked products on the visible page.
+- **All filtered** → every product matching the current search and filters across all pages.
+
+Positive percentages increase prices and negative percentages decrease them. The server updates local prices and queues one `sync-product-price` worker job per product. The worker fetches the current YouCan product/variants, changes only product and variant price values (including active quantity-discount calculations), and sends the minimal update shape required by YouCan. GMC is updated with `productInputs.patch` and `updateMask=productAttributes.price`. Descriptions, images, SEO, category, visibility, inventory, and other fields are not rewritten. Products missing YouCan/GMC mappings are reported in `lastError` and logs; price sync never falls back to a full import.

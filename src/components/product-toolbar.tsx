@@ -57,13 +57,13 @@ export function ProductToolbar({
       >
         <Tags className="h-4 w-4" /> Sync YouCan categories
       </button>
-      <a href="#selected-product-count" className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+      <a href="#selected-actions" className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
         <Sparkles className="h-4 w-4" /> Bulk SEO
       </a>
-      <a href="#selected-product-count" className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+      <a href="#selected-actions" className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
         <UploadCloud className="h-4 w-4" /> Push GMC
       </a>
-      <a href="#selected-product-count" className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+      <a href="#selected-actions" className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
         <Send className="h-4 w-4" /> Import YouCan
       </a>
     </div>

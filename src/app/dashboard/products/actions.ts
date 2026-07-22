@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { prisma } from '@/lib/db';
 import { enqueueJob } from '@/lib/jobs/queue';
 import { roundMoney } from '@/lib/pricing/formula';
-import { CountryCode, ImportStatus, SeoStatus, VisibilityStatus } from '@prisma/client';
+import { CountryCode, GmcStatus, ImportStatus, Prisma, SeoStatus, StockStatus, VisibilityStatus } from '@prisma/client';
 
 const productIdSchema = z.string().min(1);
 
@@ -180,6 +180,60 @@ export async function bulkAction(input: z.infer<typeof bulkSchema>) {
     await Promise.all(data.ids.map((codProductId) => enqueueJob(job, { codProductId, force: true })));
   }
   revalidatePath('/dashboard/products');
+}
+
+const priceOnlySchema = z.object({
+  scope: z.enum(['selected', 'all-filtered']),
+  ids: z.array(z.string().min(1)).max(50).default([]),
+  percent: z.number().min(-99).max(1000),
+  filters: z.object({
+    q: z.string().optional(),
+    country: z.nativeEnum(CountryCode).optional(),
+    category: z.string().optional(),
+    stock: z.nativeEnum(StockStatus).optional(),
+    seo: z.nativeEnum(SeoStatus).optional(),
+    importStatus: z.nativeEnum(ImportStatus).optional(),
+    gmc: z.nativeEnum(GmcStatus).optional(),
+  }).default({}),
+});
+
+export async function priceOnlyPercentageAction(input: z.infer<typeof priceOnlySchema>) {
+  const data = priceOnlySchema.parse(input);
+  if (data.scope === 'selected' && data.ids.length === 0) throw new Error('Select at least one product.');
+  const where: Prisma.CodProductWhereInput = data.scope === 'selected'
+    ? { id: { in: data.ids } }
+    : {
+      country: data.filters.country,
+      categoryId: data.filters.category,
+      stockStatus: data.filters.stock,
+      seoStatus: data.filters.seo,
+      importStatus: data.filters.importStatus,
+      gmcStatus: data.filters.gmc,
+      OR: data.filters.q ? productSearchWhere(data.filters.q) : undefined,
+    };
+  const products = await prisma.codProduct.findMany({ where, select: { id: true, price: true } });
+  const multiplier = 1 + data.percent / 100;
+
+  await prisma.$transaction(products.map((product) => prisma.codProduct.update({
+    where: { id: product.id },
+    data: { price: roundMoney(Number(product.price ?? 0) * multiplier), lastError: null },
+  })));
+  // External writes happen only in worker jobs, never in this server action.
+  await Promise.all(products.map((product) => enqueueJob('sync-product-price', { codProductId: product.id, force: true })));
+  revalidatePath('/dashboard/products');
+  return { queued: products.length, scope: data.scope };
+}
+
+function productSearchWhere(query: string): Prisma.CodProductWhereInput[] {
+  return [
+    { name: { contains: query, mode: 'insensitive' } },
+    { rawName: { contains: query, mode: 'insensitive' } },
+    { codSku: { contains: query, mode: 'insensitive' } },
+    { codProductId: { contains: query, mode: 'insensitive' } },
+    { mapping: { is: { codSku: { contains: query, mode: 'insensitive' } } } },
+    { mapping: { is: { youCanProductId: { contains: query, mode: 'insensitive' } } } },
+    { seoMetadata: { is: { title: { contains: query, mode: 'insensitive' } } } },
+  ];
 }
 
 export async function toggleProductVisibility(productId: string, visible: boolean) {

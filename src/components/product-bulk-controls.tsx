@@ -2,7 +2,8 @@
 
 import { createContext, useContext, useEffect, useMemo, useState, useTransition } from 'react';
 import { ChevronDown, ExternalLink, Eye, EyeOff, Percent, Tags } from 'lucide-react';
-import { bulkAction, toggleProductVisibility } from '@/app/dashboard/products/actions';
+import { CountryCode, GmcStatus, ImportStatus, SeoStatus, StockStatus } from '@prisma/client';
+import { bulkAction, priceOnlyPercentageAction, toggleProductVisibility } from '@/app/dashboard/products/actions';
 
 type SelectionContextValue = {
   selectedSet: Set<string>;
@@ -22,10 +23,22 @@ export function ProductBulkControls({
   products,
   categories,
   children,
+  filters,
+  totalMatching,
 }: {
   products: ProductRowForBulk[];
   categories: Array<{ id: string; name: string }>;
   children: React.ReactNode;
+  filters: {
+    q?: string;
+    country?: CountryCode;
+    category?: string;
+    stock?: StockStatus;
+    seo?: SeoStatus;
+    importStatus?: ImportStatus;
+    gmc?: GmcStatus;
+  };
+  totalMatching: number;
 }) {
   const [selected, setSelected] = useState<string[]>([]);
   const [expanded, setExpanded] = useState(false);
@@ -62,10 +75,13 @@ export function ProductBulkControls({
     run({ ids: selected, action });
   }
 
-  function runPercent() {
+  function runPercent(scope: 'selected' | 'all-filtered') {
     const value = Number(percent);
-    if (!selected.length || !Number.isFinite(value) || value < -99) return;
-    run({ ids: selected, action: 'price-percent', percent: value });
+    if ((scope === 'selected' && !selected.length) || !Number.isFinite(value) || value < -99) return;
+    startTransition(async () => {
+      await priceOnlyPercentageAction({ scope, ids: selected, percent: value, filters });
+      setSelected([]);
+    });
   }
 
   function runFixedPrice() {
@@ -81,7 +97,7 @@ export function ProductBulkControls({
 
   return (
     <ProductSelectionContext.Provider value={{ selectedSet, selectedCount: selected.length, allSelected, toggleOne, toggleAll }}>
-      <section id="selected-product-count" className="mb-4 scroll-mt-6 rounded-3xl border border-slate-200 bg-white shadow-soft">
+      <section id="selected-actions" className="mb-4 scroll-mt-6 rounded-3xl border border-slate-200 bg-white shadow-soft">
         <div className="flex flex-wrap items-center justify-between gap-3 p-3 sm:p-4">
           <div className="flex flex-wrap items-center gap-3 text-sm">
             <label className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 px-3 py-2 font-semibold text-slate-700">
@@ -122,11 +138,17 @@ export function ProductBulkControls({
             {expanded ? (
               <>
                 <div className="mt-3 grid gap-3 lg:grid-cols-3">
-                  <div className="flex gap-2">
-                    <input value={percent} onChange={(event) => setPercent(event.target.value)} placeholder="% price change" className="min-w-0 flex-1 rounded-2xl border border-slate-200 px-3 py-2 text-sm" />
-                    <button type="button" disabled={pending || !selected.length} onClick={runPercent} className="inline-flex items-center gap-1 rounded-2xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">
-                      <Percent className="h-4 w-4" /> Apply
-                    </button>
+                  <div className="rounded-2xl border border-slate-200 p-3 lg:col-span-2">
+                    <div className="flex flex-wrap gap-2">
+                      <input type="number" step="any" value={percent} onChange={(event) => setPercent(event.target.value)} placeholder="% price change (+ or −)" className="min-w-48 flex-1 rounded-2xl border border-slate-200 px-3 py-2 text-sm" />
+                      <button type="button" disabled={pending || !selected.length} onClick={() => runPercent('selected')} className="inline-flex items-center gap-1 rounded-2xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                        <Percent className="h-4 w-4" /> Selected ({selected.length})
+                      </button>
+                      <button type="button" disabled={pending || totalMatching === 0} onClick={() => runPercent('all-filtered')} className="inline-flex items-center gap-1 rounded-2xl bg-emerald-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                        <Percent className="h-4 w-4" /> All filtered ({totalMatching})
+                      </button>
+                    </div>
+                    <p className="mt-2 text-xs text-slate-500">Price-only: updates local base prices and queues one background job per product. YouCan receives only base/variant prices; GMC uses <code>productAttributes.price</code> patch. Other product fields are untouched.</p>
                   </div>
                   <div className="flex gap-2">
                     <input value={fixedPrice} onChange={(event) => setFixedPrice(event.target.value)} placeholder="Fixed base price" className="min-w-0 flex-1 rounded-2xl border border-slate-200 px-3 py-2 text-sm" />
@@ -142,7 +164,7 @@ export function ProductBulkControls({
                     </button>
                   </div>
                 </div>
-                <p className="mt-3 text-xs text-slate-500">Bulk price changes update the base price, then queue YouCan imports so all discount quantity variants are recalculated from the existing discount rules.</p>
+                <p className="mt-3 text-xs text-slate-500">The percentage operation is strictly price-only. Fixed-price and category controls retain their existing full YouCan update behavior.</p>
               </>
             ) : null}
           </div>

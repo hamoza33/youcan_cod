@@ -22,6 +22,9 @@ export function RowActions({ productId }: { productId: string }) {
       <button disabled={pending} onClick={() => run('push-gmc')} className="rounded-xl border px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50">
         <UploadCloud className="inline h-3 w-3" /> GMC
       </button>
+      <button disabled={pending} onClick={() => run('refresh-gmc-status')} className="rounded-xl border px-2 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-50">
+        <RefreshCw className="inline h-3 w-3" /> GMC status
+      </button>
     </div>
   );
 }

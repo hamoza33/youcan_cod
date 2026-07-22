@@ -7,10 +7,11 @@ import { ProductToolbar } from '@/components/product-toolbar';
 import { RowActions } from '@/components/row-actions';
 import { ExternalProductButton, ProductBulkControls, ProductSelectAllCheckbox, ProductSelectCheckbox, VisibilityToggle } from '@/components/product-bulk-controls';
 import { prisma } from '@/lib/db';
-import { formatCurrency, truncate } from '@/lib/utils';
+import { formatCurrency, formatDate, truncate } from '@/lib/utils';
 import { getRuntimeSettings, settingString, settingStringArray } from '@/lib/settings/runtime';
 import { GCC_COUNTRY_CODES } from '@/lib/settings/registry';
 import { externalProductLinks } from '@/lib/products/external-links';
+import { deriveGmcStatusDetails } from '@/lib/products/gmc-status';
 
 type RawSearchParams = Record<string, string | string[] | undefined>;
 type SearchParams = Promise<RawSearchParams>;
@@ -26,7 +27,7 @@ type ProductListFilters = {
 };
 
 const PRODUCT_PAGE_SIZE = 50;
-const productInclude = { category: true, mapping: true, seoMetadata: true } satisfies Prisma.CodProductInclude;
+const productInclude = { category: true, mapping: true, seoMetadata: true, gmcSubmissions: { orderBy: { createdAt: 'desc' as const }, take: 1 } } satisfies Prisma.CodProductInclude;
 
 export const dynamic = 'force-dynamic';
 
@@ -77,7 +78,15 @@ export default async function ProductsPage({ searchParams }: { searchParams: Sea
         actions={<ProductToolbar enabledCountries={enabledCountries} selectedCountry={filters.country} visibleProductIds={visibleProductIds} />}
       />
 
-      <form action="/dashboard/products" className="mb-4 grid gap-3 rounded-3xl border border-slate-200 bg-white p-4 shadow-soft md:grid-cols-3 xl:grid-cols-8">
+      <nav id="product-sections" className="sticky top-2 z-10 mb-4 flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-soft backdrop-blur" aria-label="Product page sections">
+        <a href="#page-actions" className="rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100">Actions</a>
+        <a href="#product-filters" className="rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100">Filters</a>
+        <a href="#selected-actions" className="rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100">Selected / bulk</a>
+        <a href="#product-list" className="rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100">Product list</a>
+      </nav>
+
+      <div id="page-actions" className="scroll-mt-20" />
+      <form id="product-filters" action="/dashboard/products" className="mb-4 grid scroll-mt-20 gap-3 rounded-3xl border border-slate-200 bg-white p-4 shadow-soft md:grid-cols-3 xl:grid-cols-8">
         <input type="hidden" name="page" value="1" />
         <input
           name="q"
@@ -105,8 +114,13 @@ export default async function ProductsPage({ searchParams }: { searchParams: Sea
         </div>
       </form>
 
-      <ProductBulkControls products={products.map((product) => ({ id: product.id }))} categories={categories.map((category) => ({ id: category.id, name: category.name }))}>
-        <div className="rounded-3xl border border-slate-200 bg-white shadow-soft">
+      <ProductBulkControls
+        products={products.map((product) => ({ id: product.id }))}
+        categories={categories.map((category) => ({ id: category.id, name: category.name }))}
+        filters={filters}
+        totalMatching={totalProducts}
+      >
+        <div id="product-list" className="scroll-mt-20 rounded-3xl border border-slate-200 bg-white shadow-soft">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
             <label className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-500">
               <ProductSelectAllCheckbox />
@@ -118,6 +132,13 @@ export default async function ProductsPage({ searchParams }: { searchParams: Sea
           <div className="divide-y divide-slate-100">
             {products.map((product) => {
               const links = externalProductLinks(product, { youCanStoreUrl, codTemplate });
+              const latestGmc = product.gmcSubmissions[0];
+              const gmcDetails = deriveGmcStatusDetails({
+                response: latestGmc?.responsePayload,
+                destinationStatuses: latestGmc?.destinationStatuses,
+                issues: latestGmc?.issues,
+                fallback: product.gmcStatus,
+              });
               return (
                 <article key={product.id} className="grid gap-3 px-4 py-3 text-sm transition hover:bg-slate-50/70 lg:grid-cols-[auto_4rem_minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)]">
                   <div className="flex items-start pt-2">
@@ -161,7 +182,12 @@ export default async function ProductsPage({ searchParams }: { searchParams: Sea
                     <div className="flex flex-wrap gap-1.5">
                       <StatusBadge value={product.seoStatus} />
                       <StatusBadge value={product.importStatus} />
-                      <StatusBadge value={product.gmcStatus} />
+                      <StatusBadge value={gmcDetails.state} />
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 px-2.5 py-2 text-[11px] leading-4 text-slate-600" title={gmcDetails.summary}>
+                      <p className="font-bold">GMC {gmcDetails.state.replaceAll('_', ' ')}</p>
+                      <p className="mt-0.5 line-clamp-2">{gmcDetails.summary}</p>
+                      <p className="mt-1 text-slate-400">Last checked: {formatDate(latestGmc?.checkedAt ?? product.lastGmcSyncAt)}</p>
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                       <ExternalProductButton href={links.youCanUrl} label="YouCan" />
@@ -342,7 +368,9 @@ function StatusBadge({ value }: { value: string }) {
   const tone =
     value.includes('APPROVED') || value.includes('READY') || value.includes('IMPORTED') || value.includes('IN_STOCK') || value.includes('VISIBLE')
       ? 'green'
-      : value.includes('FAILED') || value.includes('ERROR') || value.includes('DISAPPROVED') || value.includes('OUT_OF_STOCK')
+      : value.includes('LIMITED')
+        ? 'amber'
+        : value.includes('FAILED') || value.includes('ERROR') || value.includes('DISAPPROVED') || value.includes('OUT_OF_STOCK')
         ? 'red'
         : value.includes('PENDING') || value.includes('QUEUED') || value.includes('GENERATING') || value.includes('IMPORTING')
           ? 'amber'

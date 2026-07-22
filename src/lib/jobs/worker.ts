@@ -1,7 +1,7 @@
 import { Worker } from 'bullmq';
 import { CountryCode, ImportStatus, JobStatus, JobType, LogLevel, LogSource, SeoStatus } from '@prisma/client';
 import { createRedisConnection, QUEUE_NAME, refreshStockSyncScheduler, type AutomationJobData, type AutomationJobName } from '@/lib/jobs/queue';
-import { discoverCodProducts, enrichSeo, ensureCodSku, importToYouCan, pushToGmc, refreshGmcStatus, regenerateProductImages, syncStock, updateAllDiscountVariantsOnYouCan } from '@/lib/jobs/pipeline';
+import { discoverCodProducts, enrichSeo, ensureCodSku, importToYouCan, pushToGmc, refreshGmcStatus, regenerateProductImages, syncProductPrice, syncStock, updateAllDiscountVariantsOnYouCan } from '@/lib/jobs/pipeline';
 import { syncYouCanCategories } from '@/lib/categories/youcan-sync';
 import { prisma } from '@/lib/db';
 import { logEvent } from '@/lib/logger';
@@ -18,6 +18,7 @@ const jobTypeMap: Record<AutomationJobName, JobType> = {
   'refresh-gmc-status': JobType.REFRESH_GMC_STATUS,
   'sync-youcan-categories': JobType.SYNC_YOUCAN_CATEGORIES,
   'bulk-update-discount-variants': JobType.BULK_EDIT,
+  'sync-product-price': JobType.BULK_EDIT,
 };
 
 async function startWorker() {
@@ -118,6 +119,9 @@ async function runAutomationJob(name: AutomationJobName, data: AutomationJobData
       return syncYouCanCategories();
     case 'bulk-update-discount-variants':
       return updateAllDiscountVariantsOnYouCan();
+    case 'sync-product-price':
+      if (!data.codProductId) throw new Error('codProductId is required');
+      return syncProductPrice(data.codProductId);
   }
 }
 

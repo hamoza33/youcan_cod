@@ -27,7 +27,8 @@ import { requireCleanCodSku } from '@/lib/products/sku';
 import { ensureMappedCategory } from '@/lib/categories/youcan-sync';
 import { YouCanClient, type YouCanProduct, type YouCanProductUpdatePayload, type YouCanVariant, youCanPrimaryVariantId, youCanProductPublicUrl, youCanProductVariants } from '@/lib/integrations/youcan/client';
 import { buildMerchantProductInput } from '@/lib/products/gmc-payload';
-import { GoogleMerchantClient } from '@/lib/integrations/google-merchant/client';
+import { GoogleMerchantClient, priceToMicros } from '@/lib/integrations/google-merchant/client';
+import { deriveGmcStatusDetails, merchantIssues, persistedGmcStatus } from '@/lib/products/gmc-status';
 import { getOptionalConfig } from '@/lib/settings/config';
 import { getSettingValue } from '@/lib/settings/runtime';
 import { toJsonValue } from '@/lib/http/client';
@@ -865,22 +866,95 @@ async function buildDiscountVariantUpdatePayload(
 
 export async function refreshGmcStatus(codProductId: string) {
   const product = await prisma.codProduct.findUniqueOrThrow({ where: { id: codProductId }, include: { mapping: true } });
-  if (!product.mapping?.googleProductId) throw new Error('No Google product ID exists for this product.');
+  if (!product.mapping?.googleProductId) {
+    const error = 'Cannot refresh GMC status: this product has not been submitted to Merchant Center.';
+    await prisma.codProduct.update({ where: { id: codProductId }, data: { lastError: error } });
+    throw new Error(error);
+  }
   const merchant = await GoogleMerchantClient.create();
   const response = await merchant.getProductStatus(product.mapping.googleProductId);
-  const status = deriveGmcStatus(response);
-  await prisma.codProduct.update({ where: { id: codProductId }, data: { gmcStatus: status, lastGmcSyncAt: new Date() } });
+  const details = deriveGmcStatusDetails({ response, fallback: product.gmcStatus });
+  const status = persistedGmcStatus(details);
+  const checkedAt = new Date();
+  await prisma.codProduct.update({ where: { id: codProductId }, data: { gmcStatus: status, lastGmcSyncAt: checkedAt, lastError: null } });
   await prisma.gmcSubmission.updateMany({
     where: { codProductId, productId: product.mapping.googleProductId },
     data: {
       status,
       responsePayload: toJsonValue(response),
       destinationStatuses: toJsonValue(response.destinationStatuses ?? null),
-      issues: toJsonValue(response.productStatus ?? null),
-      checkedAt: new Date(),
+      issues: toJsonValue(merchantIssues(response)),
+      checkedAt,
     },
   });
-  return response;
+  await logEvent({ source: LogSource.GMC, message: `Refreshed GMC status: ${details.state}`, codProductId, context: toJsonValue(details) });
+  return { response, details };
+}
+
+/** Pushes only price fields to already-mapped YouCan and GMC products. */
+export async function syncProductPrice(codProductId: string) {
+  const product = await prisma.codProduct.findUniqueOrThrow({
+    where: { id: codProductId },
+    include: { mapping: true },
+  });
+  const price = Number(product.price);
+  if (!Number.isFinite(price) || price < 0) throw new Error('Cannot sync price: local product price is invalid.');
+
+  const failures: string[] = [];
+  let youCanUpdated = false;
+  let gmcUpdated = false;
+
+  if (!product.mapping?.youCanProductId) {
+    failures.push('YouCan price not synced: product has not been imported/mapped.');
+  } else {
+    try {
+      const youcan = await YouCanClient.create();
+      const remote = await youcan.getProduct(product.mapping.youCanProductId, { include: ['variants'] });
+      const variants = youCanProductVariants(remote);
+      const rules = await prisma.discountRule.findMany({ where: { isActive: true, quantity: { gt: 1 } }, orderBy: { sortOrder: 'asc' } });
+      const pricedVariants = variants.map((variant, index) => ({
+        // Existing variant id targets the update without resending inventory, image, SKU, or options.
+        ...(variant.id ? { id: variant.id } : { variations: variant.variations }),
+        price: index === 0 ? price : rules[index - 1]
+          ? applyDiscount(price * rules[index - 1].quantity, Number(rules[index - 1].discountPercent))
+          : Number(variant.price ?? price),
+      }));
+      await youcan.updateProduct(product.mapping.youCanProductId, {
+        name: remote.name,
+        has_variants: booleanValue(remote.has_variants) ?? variants.length > 0,
+        price,
+        ...(variants.length ? { variants: pricedVariants } : {}),
+      });
+      youCanUpdated = true;
+      await prisma.codProduct.update({ where: { id: codProductId }, data: { importStatus: ImportStatus.UPDATED, lastYouCanSyncAt: new Date() } });
+      await logEvent({ source: LogSource.YOUCAN, message: 'Price-only YouCan update completed', codProductId, context: toJsonValue({ price, variantCount: variants.length }) });
+    } catch (error) {
+      failures.push(`YouCan price sync failed: ${String(error)}`);
+    }
+  }
+
+  const googleProductInputId = product.mapping?.googleProductId;
+  if (!googleProductInputId) {
+    failures.push('GMC price not synced: product has not been submitted/mapped.');
+  } else {
+    try {
+      const merchant = await GoogleMerchantClient.create();
+      await merchant.patchProductPrice({
+        productInputId: merchantProductInputId(googleProductInputId),
+        price: { amountMicros: priceToMicros(price), currencyCode: product.currency },
+      });
+      gmcUpdated = true;
+      await prisma.codProduct.update({ where: { id: codProductId }, data: { lastGmcSyncAt: new Date() } });
+      await logEvent({ source: LogSource.GMC, message: 'Price-only GMC patch completed', codProductId, context: toJsonValue({ price, currency: product.currency, updateMask: 'productAttributes.price' }) });
+    } catch (error) {
+      failures.push(`GMC price sync failed: ${String(error)}`);
+    }
+  }
+
+  await prisma.codProduct.update({ where: { id: codProductId }, data: { lastError: failures.length ? failures.join(' | ') : null } });
+  if (!youCanUpdated && !gmcUpdated) throw new Error(failures.join(' | '));
+  if (failures.length) await logEvent({ source: LogSource.SYNC, level: LogLevel.WARN, message: 'Price-only sync partially completed', codProductId, context: toJsonValue({ failures }) });
+  return { price, youCanUpdated, gmcUpdated, failures };
 }
 
 async function upsertCodDropProduct(product: CodDropProduct, country: CountryCode) {
@@ -935,9 +1009,8 @@ function mergeImageUrls(...groups: Array<unknown[] | null | undefined>) {
   return [...new Set(groups.flatMap((group) => group ?? []).map((url) => (typeof url === 'string' ? url.trim() : '')).filter(Boolean))];
 }
 
-function deriveGmcStatus(response: Record<string, unknown>): GmcStatus {
-  const text = JSON.stringify(response).toLowerCase();
-  if (text.includes('disapproved') || text.includes('rejected')) return GmcStatus.DISAPPROVED;
-  if (text.includes('approved')) return GmcStatus.APPROVED;
-  return GmcStatus.PENDING;
+function merchantProductInputId(productId: string) {
+  const marker = '/products/';
+  const index = productId.indexOf(marker);
+  return index >= 0 ? productId.slice(index + marker.length) : productId;
 }

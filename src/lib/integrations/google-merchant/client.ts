@@ -85,6 +85,23 @@ export class GoogleMerchantClient {
     });
   }
 
+  async patchProductPrice(input: { productInputId: string; price: MerchantPrice }) {
+    const { accountId, dataSourceId } = this.requireIds();
+    const token = await this.getAccessToken();
+    const encodedInputId = encodeURIComponent(input.productInputId);
+    const dataSource = encodeURIComponent(`accounts/${accountId}/dataSources/${dataSourceId}`);
+    const url = `https://merchantapi.googleapis.com/products/v1/accounts/${accountId}/productInputs/${encodedInputId}?dataSource=${dataSource}&updateMask=productAttributes.price`;
+    return requestJson<MerchantProductResponse>(url, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        name: `accounts/${accountId}/productInputs/${input.productInputId}`,
+        productAttributes: { price: input.price },
+      }),
+      source: LogSource.GMC,
+    });
+  }
+
   buildProductId(input: { contentLanguage: string; feedLabel: string; offerId: string }) {
     return `${input.contentLanguage}~${input.feedLabel}~${input.offerId}`;
   }
