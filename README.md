@@ -54,6 +54,106 @@ Required before live operation:
 - `AI_API_KEY` for DuckCoding/OpenAI-compatible provider
 - `APP_BASE_URL=https://app.example.com`
 
+## Google Merchant Center credentials and first-time registration
+
+Merchant API setup has three separate parts: enabling the API in Google Cloud, granting the service account access in Merchant Center, and registering the Google Cloud project once with the Merchant account. Completing only one or two of these steps causes `403 SERVICE_DISABLED`, `PERMISSION_DENIED_ACCOUNTS`, or `GCP_NOT_REGISTERED` errors.
+
+### 1. Prepare Merchant Center
+
+1. In Merchant Center, verify and claim the customer-facing store domain.
+2. Open **Settings → Data sources** and create a **primary product data source** with input type **API**.
+3. Configure its country, language, and feed label to match the app. For KSA, the defaults are country `SA`, content language `ar`, and feed label `SA`.
+4. Record the Merchant Center account ID and API data source ID. Do not use a Business Manager ID or an unrelated parent account as `GOOGLE_MERCHANT_ACCOUNT_ID`.
+
+### 2. Create a dedicated Google Cloud project and service account
+
+1. Create or select a dedicated Google Cloud project.
+2. Enable **Merchant API** (`merchantapi.googleapis.com`) in that project.
+3. Create a service account and JSON key.
+4. In Merchant Center **People and access**, add the service-account email, for example `merchant-sync@PROJECT_ID.iam.gserviceaccount.com`, with sufficient access to manage products.
+5. Store the JSON securely using one of these options:
+
+```env
+# Preferred when the secret is stored directly by the deployment platform/dashboard:
+GOOGLE_SERVICE_ACCOUNT_JSON='{"type":"service_account",...}'
+
+# Alternative when the JSON key is mounted as a file:
+GOOGLE_APPLICATION_CREDENTIALS="/run/secrets/google-service-account.json"
+```
+
+Never commit the JSON key. The application requests the `https://www.googleapis.com/auth/content` OAuth scope.
+
+### 3. Register the Google Cloud project once as a human admin
+
+Google does not permit a service account to perform the initial `registerGcp` call. Use an individual Google user who is a direct Admin of the Merchant account being registered. The email in the JSON request body does not change the authenticated identity; the OAuth access token itself must belong to that human Admin.
+
+1. In the same Google Cloud project as the service account, configure the Google Auth consent screen.
+2. Create a **Web application** OAuth client.
+3. Add this authorized redirect URI exactly:
+
+```text
+https://developers.google.com/oauthplayground
+```
+
+4. If the OAuth app is in Testing, add the human Merchant Admin as a test user.
+5. Open [OAuth 2.0 Playground](https://developers.google.com/oauthplayground/), open its settings, enable **Use your own OAuth credentials**, and enter that OAuth client's ID and secret.
+6. Authorize this scope while signed in as the direct human Merchant Admin:
+
+```text
+https://www.googleapis.com/auth/content
+```
+
+7. Exchange the authorization code for a temporary access token.
+8. In OAuth Playground Step 3, send this request. Select `POST` separately; the request URI field must contain only the URL, without a `POST ` prefix.
+
+```http
+POST https://merchantapi.googleapis.com/accounts/v1/accounts/{MERCHANT_ACCOUNT_ID}/developerRegistration:registerGcp
+Content-Type: application/json
+Authorization: Bearer {TEMPORARY_HUMAN_ACCESS_TOKEN}
+
+{
+  "developerEmail": "human-admin@example.com"
+}
+```
+
+The Google Cloud project is inferred from the OAuth client that issued the token; do not put the project ID or number in the request body. A successful response contains the registered project number. `409 ALREADY_EXISTS` with `DUPLICATE_PROJECT_REGISTRATION` also confirms that the project is already registered.
+
+If Merchant Center is managed by Business Manager or an advanced/parent account, inherited access might not make the human user a direct member of the store account. `PERMISSION_DENIED_USER_NOT_IN_THE_MERCHANT_ACCOUNT` identifies the account where Google sees that user. The safest setup is to add a separate human Admin directly to the verified store account, authorize OAuth as that user, and register the store account. Do not unregister an existing project merely because registration returns `ALREADY_EXISTS`.
+
+After registration, revoke the temporary human OAuth token. Runtime product synchronization continues with the service account; the human token, OAuth client secret, and refresh token are not application settings.
+
+### 4. Configure and verify the app
+
+```env
+GOOGLE_MERCHANT_ACCOUNT_ID="1234567890"
+GOOGLE_MERCHANT_DATA_SOURCE_ID="12345678901"
+GOOGLE_MERCHANT_ENABLED="true"
+GMC_FEED_LABEL="SA"
+GMC_CONTENT_LANGUAGE="ar"
+```
+
+Before a production push, verify all of the following:
+
+- The service account can read `accounts/{ACCOUNT_ID}`.
+- It can read `accounts/{ACCOUNT_ID}/dataSources/{DATA_SOURCE_ID}`.
+- The data source is an API source for the intended country.
+- Product price currency matches the landing page currency (for example, `SAR`, not `USD`, for a Saudi price shown in riyals).
+- The product landing page and image URLs are publicly reachable.
+
+Product insertion is asynchronous. A successful `productInputs:insert` response means Google accepted the input; the processed `products/{PRODUCT_ID}` resource may return `404 ITEM_NOT_FOUND` briefly before appearing. Poll later or use the dashboard's GMC status refresh rather than treating the immediate 404 as an insertion failure.
+
+### GMC setup error reference
+
+| Error | Meaning | Fix |
+| --- | --- | --- |
+| `SERVICE_DISABLED` | Merchant API is disabled in the credential's Cloud project. | Enable `merchantapi.googleapis.com` in the project number named by Google. |
+| `PERMISSION_DENIED_ACCOUNTS` | The service account or OAuth user lacks Merchant account access. | Add that exact email in Merchant Center/Business Manager with suitable access. |
+| `GCP_NOT_REGISTERED` | The OAuth/service-account Cloud project is not linked to Merchant Center. | Complete the one-time human `registerGcp` flow above. |
+| `PERMISSION_DENIED_TO_REGISTER_GCP_WITH_SERVICE_ACCOUNT` | Initial registration was attempted with a service account. | Authenticate as a human Merchant Admin using OAuth. |
+| `PERMISSION_DENIED_USER_NOT_IN_THE_MERCHANT_ACCOUNT` | The OAuth token belongs to a user inherited from or directly attached to another account. | Authenticate as a direct Admin of the intended verified Merchant account. |
+| `HOMEPAGE_NOT_VERIFIED` | The account being registered has no verified homepage. | Verify the store homepage on that account or register the correct verified store account. |
+| `DUPLICATE_PROJECT_REGISTRATION` / HTTP 409 | The project is already registered. | No action required; test service-account access and continue. |
+
 ## Local setup
 
 ```bash
@@ -127,8 +227,15 @@ The app supports both an OpenAI-compatible provider and an Anthropic-compatible 
    - Uses COD SKU as `offerId`.
    - Saves submission/status details.
 6. `sync-stock`
-   - Reads COD seller stock.
-   - Updates local stock, queues YouCan update, and queues GMC update.
+   - Runs for one enabled country or all enabled stock-sync countries.
+   - Discovers newly available seller products before reconciling existing records.
+   - Updates local stock and visibility, hides out-of-stock YouCan products, and restores visibility when stock returns.
+   - Queues YouCan product updates and GMC availability updates when integrations are connected.
+   - Can queue automatic YouCan imports for newly discovered in-stock products.
+7. YouCan category and variant maintenance
+   - Synchronizes YouCan categories into local settings for category mapping and related-product selection.
+   - Supports dashboard bulk updates for quantity discount variants.
+   - Uses local same-category products for YouCan related-product links, with safe fallbacks when the category has too few products.
 
 ## Quantity discount variants
 
@@ -219,16 +326,17 @@ sudo systemctl reload caddy
 
 Ensure DNS for `app.example.com` points to `YOUR_VPS_IP`.
 
-## Missing items I still need from you for live completion
+## Production readiness checklist
 
-1. Official COD Network add/select product endpoint docs or Postman request.
-2. COD Network API token.
-3. YouCan API token and category IDs.
-4. Google Merchant account ID, API data source ID, and credentials.
-5. DuckCoding API key.
-6. GitHub repository target or permission to create/push one.
-7. VPS SSH authentication method and confirmation that Docker/Caddy/sudo are available.
-8. DNS confirmation for `app.example.com`.
+- Keep `.env.production`, Google service-account JSON, OAuth tokens, API tokens, and passwords out of Git.
+- Confirm the official COD Network add/select product endpoint and API token.
+- Confirm YouCan access, category mappings, quantity variant labels, and public store URL.
+- Complete the Merchant API setup and verification procedure above.
+- Confirm AI and SerpApi credentials through the dashboard test actions.
+- Review enabled countries, pricing/currency, discount rules, stock-sync behavior, and worker concurrency.
+- Build and run database migrations before deployment.
+- Confirm DNS, TLS, Caddy routing, `/api/health`, the worker, Redis, and PostgreSQL.
+- Push one test product and verify its processed Merchant status before enabling automatic GMC pushes broadly.
 
 ## Products dashboard action map
 
