@@ -418,6 +418,8 @@ Same as row visibility toggle:
 
 ## Settings page: `/dashboard/settings`
 
+The sticky settings navigator links directly to Project settings, every registry group, GMC currency update, SerpApi keys, AI tests, Categories, and Discount rules. These links only move within the page; they do not save settings or start jobs.
+
 ### Save all project settings
 
 1. Calls `saveSettings`.
@@ -426,6 +428,19 @@ Same as row visibility toggle:
 4. Secret fields are unchanged unless revealed/edited.
 5. Revalidates products/settings pages.
 6. Runtime values affect future server actions/jobs immediately; already-running workers may need restart for concurrency/environment-only changes.
+
+### Save GMC currency and update all existing GMC products
+
+1. Selects an ISO 4217 GMC currency such as `SAR` and saves it as `gmc.currency`.
+2. Finds only products that already have a `googleProductId` mapping.
+3. Queues one `sync-product-gmc-currency` worker job per mapped product; the browser request does not call Google directly.
+4. Each worker first reads the current Merchant product, then patches `productAttributes.price` using Google's unchanged current amount and the selected GMC currency. Merchant API stores the currency inside the price object, so the existing amount must accompany the new currency code.
+5. The operation does not update YouCan, the local product currency, descriptions, images, SEO, stock, availability, categories, or unrelated GMC attributes.
+6. Future full GMC submissions and price-only GMC updates use the configured GMC currency.
+
+### GMC preview link
+
+The **GMC** / **Open GMC** preview button appears beside YouCan and COD for products with a GMC mapping. It opens Merchant Center's item-details route using the configured account ID, offer ID, language, and feed label. Products that have not yet been pushed do not show an active GMC preview button.
 
 ### SerpApi keys: Sync credits
 

@@ -130,6 +130,7 @@ GOOGLE_MERCHANT_DATA_SOURCE_ID="12345678901"
 GOOGLE_MERCHANT_ENABLED="true"
 GMC_FEED_LABEL="SA"
 GMC_CONTENT_LANGUAGE="ar"
+GMC_CURRENCY="SAR"
 ```
 
 Before a production push, verify all of the following:
@@ -351,6 +352,9 @@ Exact toolbar button behavior:
 - **Bulk SEO** → jumps to selected/bulk actions; it does not run until products are selected and the bulk SEO action is clicked.
 - **Push GMC** → jumps to selected/bulk actions, where selected products can be queued for a full GMC submission.
 - **Import YouCan** → jumps to selected/bulk actions, where selected products can be queued for a full YouCan import/update.
+
+- **Update existing GMC product currency** → saves the selected GMC currency and queues a Merchant API currency-only correction for every product already pushed to GMC. Each worker reads Google's current amount and resends that unchanged amount because Google stores currency inside the price object, but does not update YouCan, local currency, descriptions, images, stock, categories, or unrelated GMC attributes.
+- **GMC preview** → opens the mapped product directly in the configured Google Merchant Center account from either the product row or product editor, next to the YouCan and COD preview buttons.
 
 Each product displays a detailed GMC indicator derived from the latest Merchant API `destinationStatuses` and issues. It distinguishes **pending, approved, limited, disapproved, error, excluded, queued, and not submitted**, shows the last check time and an issue summary, and includes a **GMC status** row button to queue a fresh status read. `LIMITED` is derived for display without a risky database-enum migration.
 

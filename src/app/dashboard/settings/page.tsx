@@ -1,7 +1,7 @@
 import { PageHeader } from '@/components/page-header';
 import { SettingField } from '@/components/setting-field';
 import { prisma } from '@/lib/db';
-import { addSerpApiKey, deleteSerpApiKey, saveCategories, saveDiscountRules, saveSettings, syncSerpApiKeyUsage, triggerBulkDiscountVariantUpdate, updateSerpApiKey } from '@/app/dashboard/settings/actions';
+import { addSerpApiKey, deleteSerpApiKey, saveCategories, saveDiscountRules, saveSettings, syncSerpApiKeyUsage, triggerBulkDiscountVariantUpdate, updateAllGmcCurrencies, updateSerpApiKey } from '@/app/dashboard/settings/actions';
 import { AiProviderTestButtons } from '@/components/ai-provider-test-buttons';
 import { groupedSettings, SETTINGS } from '@/lib/settings/registry';
 import { parseAiProviderOrder } from '@/lib/ai/provider-order';
@@ -26,10 +26,20 @@ export default async function SettingsPage() {
         description="Edit API keys, endpoints, countries, pricing, discounts, categories, AI, image search, YouCan, Google Merchant Center, and runtime project settings. Sensitive values are masked until you click the eye icon."
       />
 
+      <nav className="sticky top-2 z-10 mb-6 flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-soft backdrop-blur" aria-label="Settings page sections">
+        <a href="#project-settings" className="rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100">Project settings</a>
+        {groups.map(({ group }) => <a key={group} href={`#${sectionId(group)}`} className="rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100">{group}</a>)}
+        <a href="#gmc-currency-update" className="rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100">GMC currency update</a>
+        <a href="#serpapi-keys" className="rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100">SerpApi keys</a>
+        <a href="#ai-tests" className="rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100">AI tests</a>
+        <a href="#categories" className="rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100">Categories</a>
+        <a href="#discount-rules" className="rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100">Discount rules</a>
+      </nav>
+
       <div className="grid gap-6 xl:grid-cols-[1fr_480px]">
-        <form action={saveSettings} className="space-y-8 rounded-3xl border border-slate-200 bg-white p-6 shadow-soft">
+        <form id="project-settings" action={saveSettings} className="scroll-mt-24 space-y-8 rounded-3xl border border-slate-200 bg-white p-6 shadow-soft">
           {groups.map(({ group, definitions }) => (
-            <Section key={group} title={group}>
+            <Section key={group} id={sectionId(group)} title={group}>
               <div className="grid gap-4 md:grid-cols-2">
                 {definitions.map((definition) => (
                   <div key={definition.key} className={definition.input === 'json' || definition.input === 'countries' ? 'md:col-span-2' : ''}>
@@ -54,11 +64,13 @@ export default async function SettingsPage() {
             </p>
           </div>
 
+          <GmcCurrencyUpdatePanel currency={String(values['gmc.currency'] ?? 'SAR')} />
+
           <SerpApiKeysPanel keys={serpApiKeys} />
 
           <AiProviderTestPanel providerOrder={parseAiProviderOrder(String(values['ai.providerOrder'] ?? 'openai,anthropic'))} />
 
-          <form action={saveCategories} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-soft">
+          <form id="categories" action={saveCategories} className="scroll-mt-24 rounded-3xl border border-slate-200 bg-white p-6 shadow-soft">
             <h2 className="text-lg font-bold text-ink">Categories</h2>
             <p className="mt-2 text-sm text-slate-500">Edit category names, YouCan mapping IDs, Google categories, active status, and sort order.</p>
             <div className="mt-4 max-h-[560px] space-y-3 overflow-y-auto pr-1">
@@ -83,7 +95,7 @@ export default async function SettingsPage() {
             <button className="mt-4 rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold">Save categories</button>
           </form>
 
-          <form action={saveDiscountRules} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-soft">
+          <form id="discount-rules" action={saveDiscountRules} className="scroll-mt-24 rounded-3xl border border-slate-200 bg-white p-6 shadow-soft">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h2 className="text-lg font-bold text-ink">Discount variant rules</h2>
@@ -128,9 +140,36 @@ export default async function SettingsPage() {
   );
 }
 
+function GmcCurrencyUpdatePanel({ currency }: { currency: string }) {
+  return (
+    <form id="gmc-currency-update" action={updateAllGmcCurrencies} className="scroll-mt-24 rounded-3xl border border-emerald-200 bg-emerald-50 p-6 shadow-soft">
+      <h2 className="text-lg font-bold text-ink">Update existing GMC product currency</h2>
+      <p className="mt-2 text-sm leading-6 text-slate-600">
+        Saves the selected GMC currency and queues a currency-only Merchant API patch for every product already pushed to GMC. Each worker reads Google's current amount and resends that unchanged amount with the new currency code. YouCan, local currency, titles, descriptions, images, stock, categories, and other GMC fields are not changed.
+      </p>
+      <label className="mt-4 block space-y-2 text-sm font-semibold text-slate-700">
+        GMC currency
+        <select name="gmc.currency" defaultValue={currency} className="input">
+          <option value="SAR">Saudi riyal (SAR)</option>
+          <option value="AED">UAE dirham (AED)</option>
+          <option value="KWD">Kuwaiti dinar (KWD)</option>
+          <option value="QAR">Qatari riyal (QAR)</option>
+          <option value="BHD">Bahraini dinar (BHD)</option>
+          <option value="OMR">Omani rial (OMR)</option>
+          <option value="USD">US dollar (USD)</option>
+        </select>
+      </label>
+      <p className="mt-3 rounded-2xl bg-white/80 p-3 text-xs font-semibold leading-5 text-emerald-800">
+        Google represents currency inside the price object. Each worker first reads the current Merchant product amount, then resends that exact amount with the selected currency code while masking the patch to <code>productAttributes.price</code>.
+      </p>
+      <button className="mt-4 rounded-2xl bg-emerald-700 px-4 py-2 text-sm font-bold text-white">Save currency and update all existing GMC products</button>
+    </form>
+  );
+}
+
 function AiProviderTestPanel({ providerOrder }: { providerOrder: Array<'openai' | 'anthropic'> }) {
   return (
-    <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-soft">
+    <section id="ai-tests" className="scroll-mt-24 rounded-3xl border border-slate-200 bg-white p-6 shadow-soft">
       <h2 className="text-lg font-bold text-ink">AI provider tests</h2>
       <p className="mt-2 text-sm leading-6 text-slate-500">
         Test buttons send a tiny JSON request. Current fallback order: <span className="font-bold text-ink">{providerOrder.join(' → ')}</span>.
@@ -162,7 +201,7 @@ function SerpApiKeysPanel({ keys }: { keys: Array<{
   const totalRemaining = keys.reduce((sum, key) => sum + Math.max(0, key.monthlyLimit - key.monthlyUsage), 0);
 
   return (
-    <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-soft">
+    <section id="serpapi-keys" className="scroll-mt-24 rounded-3xl border border-slate-200 bg-white p-6 shadow-soft">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-lg font-bold text-ink">SerpApi keys</h2>
@@ -258,6 +297,10 @@ function SummaryCard({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return <section className="space-y-4"><h2 className="text-lg font-bold text-ink">{title}</h2>{children}</section>;
+function Section({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
+  return <section id={id} className="scroll-mt-24 space-y-4"><h2 className="text-lg font-bold text-ink">{title}</h2>{children}</section>;
+}
+
+function sectionId(group: string) {
+  return `settings-${group.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
 }

@@ -407,6 +407,7 @@ export async function pushToGmc(codProductId: string) {
     appBaseUrl,
     contentLanguage: env.GMC_CONTENT_LANGUAGE ?? 'ar',
     feedLabel: env.GMC_FEED_LABEL ?? 'SA',
+    currencyCode: env.GMC_CURRENCY ?? 'SAR',
   });
   const response = await merchant.insertProduct(payload);
   const productId = response.product ? String(response.product).split('/').pop() : merchant.buildProductId(payload);
@@ -760,6 +761,10 @@ function stringValue(value: unknown) {
   return typeof value === 'string' || typeof value === 'number' ? String(value).trim() || undefined : undefined;
 }
 
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
 function numberValue(value: unknown) {
   const number = Number(value);
   return Number.isFinite(number) ? number : undefined;
@@ -891,6 +896,38 @@ export async function refreshGmcStatus(codProductId: string) {
   return { response, details };
 }
 
+/** Updates only the GMC price currency for an already-submitted product. */
+export async function syncProductGmcCurrency(codProductId: string) {
+  const product = await prisma.codProduct.findUniqueOrThrow({
+    where: { id: codProductId },
+    include: { mapping: true },
+  });
+  if (!product.mapping?.googleProductId) {
+    const error = 'GMC currency not synced: product has not been submitted/mapped.';
+    await prisma.codProduct.update({ where: { id: codProductId }, data: { lastError: error } });
+    throw new Error(error);
+  }
+
+  const env = await getOptionalConfig();
+  const currency = normalizeCurrencyCode(env.GMC_CURRENCY ?? 'SAR');
+  const merchant = await GoogleMerchantClient.create();
+  const current = await merchant.getProductStatus(product.mapping.googleProductId);
+  const amountMicros = merchantAmountMicros(current);
+  await merchant.patchProductCurrency({
+    productInputId: merchantProductInputId(product.mapping.googleProductId),
+    price: { amountMicros, currencyCode: currency },
+  });
+  const syncedAt = new Date();
+  await prisma.codProduct.update({ where: { id: codProductId }, data: { lastGmcSyncAt: syncedAt, lastError: null } });
+  await logEvent({
+    source: LogSource.GMC,
+    message: `GMC currency-only update completed: ${currency}`,
+    codProductId,
+    context: toJsonValue({ currency, amountMicros, updateMask: 'productAttributes.price' }),
+  });
+  return { currency, amountMicros, updated: true };
+}
+
 /** Pushes only price fields to already-mapped YouCan and GMC products. */
 export async function syncProductPrice(codProductId: string) {
   const product = await prisma.codProduct.findUniqueOrThrow({
@@ -939,13 +976,15 @@ export async function syncProductPrice(codProductId: string) {
   } else {
     try {
       const merchant = await GoogleMerchantClient.create();
+      const env = await getOptionalConfig();
+      const currency = normalizeCurrencyCode(env.GMC_CURRENCY ?? 'SAR');
       await merchant.patchProductPrice({
         productInputId: merchantProductInputId(googleProductInputId),
-        price: { amountMicros: priceToMicros(price), currencyCode: product.currency },
+        price: { amountMicros: priceToMicros(price), currencyCode: currency },
       });
       gmcUpdated = true;
       await prisma.codProduct.update({ where: { id: codProductId }, data: { lastGmcSyncAt: new Date() } });
-      await logEvent({ source: LogSource.GMC, message: 'Price-only GMC patch completed', codProductId, context: toJsonValue({ price, currency: product.currency, updateMask: 'productAttributes.price' }) });
+      await logEvent({ source: LogSource.GMC, message: 'Price-only GMC patch completed', codProductId, context: toJsonValue({ price, currency, updateMask: 'productAttributes.price' }) });
     } catch (error) {
       failures.push(`GMC price sync failed: ${String(error)}`);
     }
@@ -1013,4 +1052,21 @@ function merchantProductInputId(productId: string) {
   const marker = '/products/';
   const index = productId.indexOf(marker);
   return index >= 0 ? productId.slice(index + marker.length) : productId;
+}
+
+function normalizeCurrencyCode(value: string) {
+  const currency = value.trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) throw new Error(`Invalid GMC currency code: ${value}`);
+  return currency;
+}
+
+function merchantAmountMicros(response: unknown) {
+  const payload = objectValue(response);
+  const attributes = objectValue(payload.productAttributes);
+  const price = objectValue(attributes.price);
+  const amountMicros = stringValue(price.amountMicros);
+  if (!amountMicros || !/^\d+$/.test(amountMicros)) {
+    throw new Error('Cannot update only GMC currency because the existing Merchant price amount could not be read. No update was sent.');
+  }
+  return amountMicros;
 }

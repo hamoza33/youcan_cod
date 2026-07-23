@@ -26,6 +26,7 @@ export default async function ProductDetailPage({ params }: { params: Params }) 
   const links = externalProductLinks(product, {
     youCanStoreUrl: settingString(settings, 'youCan.storeUrl'),
     codTemplate: settingString(settings, 'codNetwork.productPageUrlTemplate'),
+    googleMerchantAccountId: settingString(settings, 'googleMerchant.accountId'),
   });
 
   return (
@@ -37,6 +38,7 @@ export default async function ProductDetailPage({ params }: { params: Params }) 
           <div className="flex flex-wrap gap-2">
             <ExternalProductButton href={links.youCanUrl} label="Open YouCan" />
             <ExternalProductButton href={links.codUrl} label="Open COD" />
+            <ExternalProductButton href={links.gmcUrl} label="Open GMC" />
             <Link className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold" href="/dashboard/products">Back to products</Link>
           </div>
         }
@@ -125,6 +127,7 @@ export default async function ProductDetailPage({ params }: { params: Params }) 
               <Row label="YouCan ID" value={product.mapping?.youCanProductId ?? '—'} />
               <Row label="YouCan URL" value={links.youCanUrl ?? '—'} />
               <Row label="COD URL" value={links.codUrl ?? '—'} />
+              <Row label="GMC URL" value={links.gmcUrl ?? '—'} />
               <Row label="Google Product ID" value={product.mapping?.googleProductId ?? '—'} />
             </dl>
           </div>

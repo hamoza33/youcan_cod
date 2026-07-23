@@ -9,6 +9,7 @@ export function buildMerchantProductInput(input: {
   appBaseUrl: string;
   contentLanguage?: string;
   feedLabel?: string;
+  currencyCode?: string;
 }): MerchantProductInput {
   const price = Number(input.product.price ?? input.product.productCost ?? 0);
   const offerId = input.mapping.codSku;
@@ -30,7 +31,7 @@ export function buildMerchantProductInput(input: {
       imageLink,
       additionalImageLinks: input.product.imageUrls.slice(1, 10),
       availability: input.product.stockStatus === StockStatus.OUT_OF_STOCK ? 'OUT_OF_STOCK' : 'IN_STOCK',
-      price: { amountMicros: priceToMicros(price), currencyCode: input.product.currency || 'SAR' },
+      price: { amountMicros: priceToMicros(price), currencyCode: input.currencyCode ?? 'SAR' },
       condition: 'NEW',
       googleProductCategory: input.category?.googleProductCategory ?? undefined,
       customLabel0: 'COD Network',

@@ -23,6 +23,28 @@ export async function saveSettings(formData: FormData) {
   revalidatePath('/dashboard/products');
 }
 
+export async function updateAllGmcCurrencies(formData: FormData) {
+  const currency = normalizeCurrency(formData.get('gmc.currency'));
+  await upsertSettingValue('gmc.currency', currency);
+  const products = await prisma.codProduct.findMany({
+    where: { mapping: { is: { googleProductId: { not: null } } } },
+    select: { id: true },
+  });
+  for (const product of products) {
+    await enqueueJob('sync-product-gmc-currency', { codProductId: product.id, force: true });
+  }
+  await prisma.logEvent.create({
+    data: {
+      source: 'GMC',
+      level: 'INFO',
+      message: `Queued GMC currency-only updates for ${products.length} existing product(s): ${currency}.`,
+      context: { productCount: products.length, currency },
+    },
+  });
+  revalidatePath('/dashboard/settings');
+  revalidatePath('/dashboard/products');
+}
+
 export async function saveCategories(formData: FormData) {
   const ids = formData.getAll('category.id').map(String);
   for (const id of ids) {
@@ -200,4 +222,10 @@ function parseJson(value: FormDataEntryValue | null, fallback: unknown) {
 function emptyToNull(value: FormDataEntryValue | null) {
   const text = String(value ?? '').trim();
   return text ? text : null;
+}
+
+function normalizeCurrency(value: FormDataEntryValue | null) {
+  const currency = String(value ?? 'SAR').trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) throw new Error('GMC currency must be a three-letter ISO 4217 code.');
+  return currency;
 }

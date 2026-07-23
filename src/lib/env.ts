@@ -46,6 +46,7 @@ const envSchema = z.object({
   APP_BASE_URL: z.string().url().optional(),
   GMC_FEED_LABEL: z.string().default('SA'),
   GMC_CONTENT_LANGUAGE: z.string().default('ar'),
+  GMC_CURRENCY: z.string().regex(/^[A-Z]{3}$/).default('SAR'),
   COD_NETWORK_WEBHOOK_SECRET: z.string().optional(),
   IMPORT_DEFAULT_COUNTRY: z.string().default('SA'),
 });

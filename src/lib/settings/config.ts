@@ -31,6 +31,7 @@ export async function getConfig(): Promise<AppEnv> {
     GOOGLE_MERCHANT_ENABLED: settingBoolean(settings, 'googleMerchant.enabled') ? 'true' : 'false',
     GOOGLE_APPLICATION_CREDENTIALS: settingString(settings, 'googleMerchant.applicationCredentials') || env.GOOGLE_APPLICATION_CREDENTIALS,
     GOOGLE_SERVICE_ACCOUNT_JSON: settingString(settings, 'googleMerchant.serviceAccountJson') || env.GOOGLE_SERVICE_ACCOUNT_JSON,
+    GMC_CURRENCY: settingString(settings, 'gmc.currency').toUpperCase() || env.GMC_CURRENCY,
     AI_PROVIDER_NAME: settingString(settings, 'ai.provider') || env.AI_PROVIDER_NAME,
     AI_BASE_URL: settingString(settings, 'ai.baseUrl') || env.AI_BASE_URL,
     AI_API_KEY: settingString(settings, 'ai.apiKey') || env.AI_API_KEY,

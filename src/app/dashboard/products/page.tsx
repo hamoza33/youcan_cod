@@ -67,6 +67,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Sea
   const categories = await prisma.category.findMany({ where: { isActive: true }, orderBy: { sortOrder: 'asc' } });
   const youCanStoreUrl = settingString(settings, 'youCan.storeUrl');
   const codTemplate = settingString(settings, 'codNetwork.productPageUrlTemplate');
+  const googleMerchantAccountId = settingString(settings, 'googleMerchant.accountId');
   const visibleProductIds = products.map((product) => product.id);
   const activeFilterCount = activeFilters(filters);
 
@@ -131,7 +132,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Sea
 
           <div className="divide-y divide-slate-100">
             {products.map((product) => {
-              const links = externalProductLinks(product, { youCanStoreUrl, codTemplate });
+              const links = externalProductLinks(product, { youCanStoreUrl, codTemplate, googleMerchantAccountId });
               const latestGmc = product.gmcSubmissions[0];
               const gmcDetails = deriveGmcStatusDetails({
                 response: latestGmc?.responsePayload,
@@ -192,6 +193,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Sea
                     <div className="flex flex-wrap gap-1.5">
                       <ExternalProductButton href={links.youCanUrl} label="YouCan" />
                       <ExternalProductButton href={links.codUrl} label="COD" />
+                      <ExternalProductButton href={links.gmcUrl} label="GMC" />
                     </div>
                     <RowActions productId={product.id} />
                   </div>

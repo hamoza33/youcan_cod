@@ -15,7 +15,8 @@ export type AutomationJobName =
   | 'refresh-gmc-status'
   | 'sync-youcan-categories'
   | 'bulk-update-discount-variants'
-  | 'sync-product-price';
+  | 'sync-product-price'
+  | 'sync-product-gmc-currency';
 
 export type AutomationJobData = {
   codProductId?: string;

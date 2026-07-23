@@ -86,11 +86,21 @@ export class GoogleMerchantClient {
   }
 
   async patchProductPrice(input: { productInputId: string; price: MerchantPrice }) {
+    return this.patchProductPriceFields(input, 'productAttributes.price');
+  }
+
+  async patchProductCurrency(input: { productInputId: string; price: MerchantPrice }) {
+    // Merchant API models currency as part of the price message, so a currency-only
+    // correction must send the existing amount together with the new currency code.
+    return this.patchProductPriceFields(input, 'productAttributes.price');
+  }
+
+  private async patchProductPriceFields(input: { productInputId: string; price: MerchantPrice }, updateMask: string) {
     const { accountId, dataSourceId } = this.requireIds();
     const token = await this.getAccessToken();
     const encodedInputId = encodeURIComponent(input.productInputId);
     const dataSource = encodeURIComponent(`accounts/${accountId}/dataSources/${dataSourceId}`);
-    const url = `https://merchantapi.googleapis.com/products/v1/accounts/${accountId}/productInputs/${encodedInputId}?dataSource=${dataSource}&updateMask=productAttributes.price`;
+    const url = `https://merchantapi.googleapis.com/products/v1/accounts/${accountId}/productInputs/${encodedInputId}?dataSource=${dataSource}&updateMask=${encodeURIComponent(updateMask)}`;
     return requestJson<MerchantProductResponse>(url, {
       method: 'PATCH',
       headers: { Authorization: `Bearer ${token}` },
