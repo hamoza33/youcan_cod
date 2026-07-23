@@ -325,7 +325,7 @@ sudo caddy validate --config /etc/caddy/Caddyfile
 sudo systemctl reload caddy
 ```
 
-Ensure DNS for `app.example.com` points to `YOUR_VPS_IP`.
+Ensure DNS for `app.example.com` points to the VPS.
 
 ## Production readiness checklist
 

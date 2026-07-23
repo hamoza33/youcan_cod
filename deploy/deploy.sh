@@ -27,4 +27,4 @@ fi
 docker compose build
 docker compose up -d
 
-echo "Deploy complete. Configure Caddy with deploy/Caddyfile and ensure DNS points app.example.com to this VPS."
+echo "Deploy complete. Configure Caddy with deploy/Caddyfile and point your app domain to this VPS."
