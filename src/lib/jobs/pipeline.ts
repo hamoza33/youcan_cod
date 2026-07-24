@@ -796,7 +796,18 @@ export async function updateAllDiscountVariantsOnYouCan() {
       if (!product.mapping?.youCanProductId || !product.codSku) continue;
       const remote = await youcan.getProduct(product.mapping.youCanProductId, { include: ['variants'] });
       const payload = await buildDiscountVariantUpdatePayload(remote, product);
+
+      // YouCan can retain legacy variant options when a product update only sends the new
+      // variants. Reset only non-canonical products first, then recreate the configured set.
+      // Canonical products skip the destructive reset but still receive current prices/stock.
+      if (!hasOnlyConfiguredVariants(remote, payload)) {
+        await youcan.updateProduct(product.mapping.youCanProductId, buildVariantResetPayload(payload));
+      }
       const response = await youcan.updateProduct(product.mapping.youCanProductId, payload);
+      const verified = await youcan.getProduct(product.mapping.youCanProductId, { include: ['variants'] });
+      if (!hasOnlyConfiguredVariants(verified, payload)) {
+        throw new Error('YouCan retained legacy variants after replacement; the product was not marked updated.');
+      }
       await prisma.productMapping.update({
         where: { id: product.mapping.id },
         data: {
@@ -810,12 +821,50 @@ export async function updateAllDiscountVariantsOnYouCan() {
     } catch (error) {
       failed += 1;
       await prisma.codProduct.update({ where: { id: product.id }, data: { lastError: String(error) } });
-      await logEvent({ source: LogSource.YOUCAN, level: LogLevel.ERROR, message: 'Failed to update discount variant labels on YouCan', codProductId: product.id, context: toJsonValue({ error: String(error) }) });
+      await logEvent({ source: LogSource.YOUCAN, level: LogLevel.ERROR, message: 'Failed to replace legacy YouCan variants with configured variants', codProductId: product.id, context: toJsonValue({ error: String(error) }) });
     }
   }
 
-  await logEvent({ source: LogSource.YOUCAN, message: `Bulk discount variant update finished: ${updated} updated, ${failed} failed`, context: toJsonValue({ total: products.length, updated, failed }) });
+  await logEvent({ source: LogSource.YOUCAN, message: `Bulk variant replacement finished: ${updated} updated, ${failed} failed`, context: toJsonValue({ total: products.length, updated, failed, mode: 'replace-legacy-with-configured-only' }) });
   return { total: products.length, updated, failed };
+}
+
+function buildVariantResetPayload(payload: YouCanProductUpdatePayload): YouCanProductUpdatePayload {
+  return {
+    name: payload.name,
+    has_variants: false,
+    price: payload.price,
+    visibility: payload.visibility,
+    track_inventory: payload.track_inventory,
+    inventory: payload.inventory,
+    sku: payload.sku,
+  };
+}
+
+function hasOnlyConfiguredVariants(remote: YouCanProduct, payload: YouCanProductUpdatePayload) {
+  if (!payload.has_variants) return youCanProductVariants(remote).length <= 1 && !booleanValue(remote.has_variants);
+
+  const expectedOption = payload.variant_options?.[0];
+  const remoteOptionsValue = (remote as { variant_options?: unknown }).variant_options;
+  const remoteOptions = Array.isArray(remoteOptionsValue)
+    ? remoteOptionsValue as Array<{ name?: unknown; type?: unknown; values?: unknown }>
+    : [];
+  if (!expectedOption || remoteOptions.length !== 1) return false;
+
+  const remoteOption = remoteOptions[0];
+  const remoteValues = Array.isArray(remoteOption.values) ? remoteOption.values.map(String) : [];
+  if (String(remoteOption.name ?? '') !== expectedOption.name || Number(remoteOption.type) !== expectedOption.type) return false;
+  if (!sameStringSet(remoteValues, expectedOption.values)) return false;
+
+  const expectedLabels = (payload.variants ?? []).map((variant) => variant.variations?.[expectedOption.name] ?? '').filter(Boolean);
+  const remoteVariants = youCanProductVariants(remote);
+  const remoteLabels = remoteVariants.map((variant) => variant.variations?.[expectedOption.name] ?? '').filter(Boolean);
+  return remoteVariants.length === expectedLabels.length && sameStringSet(remoteLabels, expectedLabels);
+}
+
+function sameStringSet(left: string[], right: string[]) {
+  return left.length === right.length && new Set(left).size === left.length && new Set(right).size === right.length
+    && left.every((value) => right.includes(value));
 }
 
 async function buildDiscountVariantUpdatePayload(

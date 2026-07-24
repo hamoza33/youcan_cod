@@ -98,10 +98,10 @@ export default async function SettingsPage() {
           <form id="discount-rules" action={saveDiscountRules} className="scroll-mt-24 rounded-3xl border border-slate-200 bg-white p-6 shadow-soft">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <h2 className="text-lg font-bold text-ink">Discount variant rules</h2>
-                <p className="mt-2 text-sm text-slate-500">These three required YouCan options are fixed so deleted legacy rules cannot return after an app restart.</p>
+                <h2 className="text-lg font-bold text-ink">Current YouCan variants</h2>
+                <p className="mt-2 text-sm text-slate-500">Apply the three current quantity variants to every imported product. Products with legacy options are reset first, so only these three variants remain.</p>
               </div>
-              <button formAction={triggerBulkDiscountVariantUpdate} className="rounded-2xl bg-slate-900 px-4 py-2 text-xs font-bold text-white">Bulk update YouCan variants</button>
+              <button formAction={triggerBulkDiscountVariantUpdate} className="rounded-2xl bg-slate-900 px-4 py-2 text-xs font-bold text-white">Apply variants to all products</button>
             </div>
             <div className="mt-4 space-y-3">
               {discounts.map((rule) => (
