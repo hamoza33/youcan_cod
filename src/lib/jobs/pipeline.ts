@@ -197,7 +197,6 @@ export async function importToYouCan(codProductId: string, options: { enqueueGmc
     product = await updateProductForImport(codProductId, {
       categoryId: category?.id ?? product.categoryId,
       imageUrls: enrichedImageUrls,
-      codSku: sku,
     });
     const seo = product.seoMetadata;
     if (!seo) throw new Error('Cannot import to YouCan before SEO metadata is ready.');
@@ -1049,8 +1048,11 @@ export async function syncProductPrice(codProductId: string) {
     }
   }
 
-  await prisma.codProduct.update({ where: { id: codProductId }, data: { lastError: failures.length ? failures.join(' | ') : null } });
-  if (!youCanUpdated && !gmcUpdated) throw new Error(failures.join(' | '));
+  await prisma.codProduct.update({ where: { id: codProductId }, data: { lastError: failures.length && (youCanUpdated || gmcUpdated) ? failures.join(' | ') : null } });
+  if (!youCanUpdated && !gmcUpdated) {
+    await logEvent({ source: LogSource.SYNC, level: LogLevel.INFO, message: 'Price-only external sync skipped because the product is not mapped yet', codProductId, context: toJsonValue({ price, failures }) });
+    return { price, youCanUpdated, gmcUpdated, failures, skipped: true };
+  }
   if (failures.length) await logEvent({ source: LogSource.SYNC, level: LogLevel.WARN, message: 'Price-only sync partially completed', codProductId, context: toJsonValue({ failures }) });
   return { price, youCanUpdated, gmcUpdated, failures };
 }
@@ -1061,8 +1063,15 @@ async function upsertCodDropProduct(product: CodDropProduct, country: CountryCod
   const price = codBasePrice(product as Record<string, unknown>, formula);
   const stockQuantity = typeof product.quantity === 'number' ? product.quantity : undefined;
   const codSku = typeof product.sku === 'string' && product.sku.trim() ? product.sku.trim() : undefined;
-  const existing = await prisma.codProduct.findUnique({ where: { codProductId_country: { codProductId: String(product.id), country } }, select: { imageUrls: true } });
-  const imageUrls = mergeImageUrls(codImageUrls(product), existing?.imageUrls ?? []);
+  const existing = await prisma.codProduct.findUnique({ where: { codProductId_country: { codProductId: String(product.id), country } }, select: { id: true, imageUrls: true } });
+  const existingBySku = codSku ? await prisma.codProduct.findUnique({ where: { codSku }, select: { id: true, imageUrls: true } }) : null;
+  const imageUrls = mergeImageUrls(codImageUrls(product), existing?.imageUrls ?? existingBySku?.imageUrls ?? []);
+  if (!existing && existingBySku) {
+    return prisma.codProduct.update({
+      where: { id: existingBySku.id },
+      data: { rawName: product.name, name: product.name, rawDescription: product.description, productCost, price, currency: product.currency ?? 'SAR', stockQuantity, stockStatus: stockQuantity === 0 ? StockStatus.OUT_OF_STOCK : StockStatus.IN_STOCK, imageUrls, rawPayload: toJsonValue(product), lastCodSyncAt: new Date() },
+    });
+  }
 
   return prisma.codProduct.upsert({
     where: { codProductId_country: { codProductId: String(product.id), country } },

@@ -54,6 +54,10 @@ export async function generateSeoMetadata(input: {
     ai,
   });
 
+  // OpenAI-compatible vision gateways commonly reject insecure HTTP image URLs.
+  // Keep those URLs in the product record, but never send them as multimodal inputs.
+  const aiImageUrls = imageUrls.filter(isAiCompatibleImageUrl);
+
   const result = await ai.chatJson<SeoGenerationResult>(
     [
       {
@@ -107,7 +111,7 @@ export async function generateSeoMetadata(input: {
               },
             }),
           },
-          ...imageUrls.slice(0, 6).map((url) => ({ type: 'image_url' as const, image_url: { url } })),
+          ...aiImageUrls.slice(0, 6).map((url) => ({ type: 'image_url' as const, image_url: { url } })),
         ],
       },
     ],
@@ -130,6 +134,14 @@ export async function generateSeoMetadata(input: {
     aiModel: ai.model,
     rawAiResponse: result,
   };
+}
+
+function isAiCompatibleImageUrl(value: string) {
+  try {
+    return new URL(value).protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
 export function normalizeSlug(value: string) {

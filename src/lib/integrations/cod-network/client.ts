@@ -1,5 +1,5 @@
 import { CountryCode, LogSource } from '@prisma/client';
-import { requestJson } from '@/lib/http/client';
+import { ApiError, requestJson } from '@/lib/http/client';
 import { getConfig } from '@/lib/settings/config';
 import { countryMatches } from '@/lib/countries';
 import { codRecommendedPrice } from '@/lib/products/cod-pricing';
@@ -140,7 +140,19 @@ export class CodNetworkClient {
     }
 
     const url = this.endpointUrl(endpoint);
-    const created = await this.post<CodSellerProduct | { data?: CodSellerProduct }>(url, buildAddProductPayload(dropProduct));
+    let created: CodSellerProduct | { data?: CodSellerProduct };
+    try {
+      created = await this.post<CodSellerProduct | { data?: CodSellerProduct }>(url, buildAddProductPayload(dropProduct));
+    } catch (error) {
+      // COD Network returns 422 when a catalog item was already dropped, but its
+      // seller record uses a different numeric id and exposes no catalog id.
+      // Recover that existing record by an exact normalized product-name match.
+      if (isAlreadyDroppedError(error)) {
+        const recovered = await this.findSellerProductByExactName(dropProduct);
+        if (recovered?.sku) return { sellerProduct: recovered, sku: recovered.sku };
+      }
+      throw error;
+    }
     const sellerProduct: CodSellerProduct = isWrappedSellerProduct(created) ? created.data : (created as CodSellerProduct);
 
     if (!sellerProduct.sku) {
@@ -150,6 +162,15 @@ export class CodNetworkClient {
     }
 
     return { sellerProduct, sku: sellerProduct.sku };
+  }
+
+  private async findSellerProductByExactName(dropProduct: CodDropProduct) {
+    const expectedName = normalizeProductName(dropProduct.name);
+    if (!expectedName) return undefined;
+    const matches = (await this.listSellerProducts()).filter((product) =>
+      normalizeProductName(product.name) === expectedName && isCountryProduct(product, dropProductCountry(dropProduct)),
+    );
+    return matches.length === 1 ? matches[0] : undefined;
   }
 
   private async getPaginated<T>(url: string, params: URLSearchParams) {
@@ -226,4 +247,21 @@ function buildAddProductPayload(dropProduct: CodDropProduct) {
 
 function isWrappedSellerProduct(value: CodSellerProduct | { data?: CodSellerProduct }): value is { data: CodSellerProduct } {
   return typeof value === 'object' && value !== null && 'data' in value && Boolean(value.data);
+}
+
+function isAlreadyDroppedError(error: unknown) {
+  if (!(error instanceof ApiError) || error.status !== 422) return false;
+  const payload = error.payload as { errors?: { product_id?: unknown }; message?: unknown } | null;
+  const details = JSON.stringify(payload?.errors?.product_id ?? payload?.message ?? '').toLowerCase();
+  return details.includes('already dropped');
+}
+
+function normalizeProductName(value: unknown) {
+  return typeof value === 'string' ? value.trim().toLowerCase().replace(/[^a-z0-9\p{L}]+/gu, ' ').replace(/\s+/g, ' ').trim() : '';
+}
+
+function dropProductCountry(product: CodDropProduct) {
+  const value = product.country_iso_code ?? (typeof product.country === 'string' ? product.country : product.country?.iso_code ?? product.country?.code) ?? product.country_name;
+  const normalized = String(value ?? 'SA').toUpperCase();
+  return (['SA', 'AE', 'KW', 'QA', 'BH', 'OM'].includes(normalized) ? normalized : 'SA') as CountryCode;
 }
