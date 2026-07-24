@@ -956,10 +956,16 @@ export async function syncProductPrice(codProductId: string) {
       const rules = await prisma.discountRule.findMany({ where: { isActive: true }, orderBy: { sortOrder: 'asc' } });
       const singleQuantityLabel = (await getSettingValue<string>('youCan.singleQuantityLabel').catch(() => ''))?.trim() || arabicQuantityValue(1);
       const priced = priceYouCanQuantityVariants({ variants, unitPrice: price, rules, singleQuantityLabel });
-      if (priced.unmatchedVariantIds.length) {
-        throw new Error(`Cannot safely map YouCan quantity variants: ${priced.unmatchedVariantIds.join(', ')}`);
-      }
       const pricedVariants = priced.variants;
+      if (priced.unmatchedVariantIds.length) {
+        await logEvent({
+          source: LogSource.YOUCAN,
+          level: LogLevel.WARN,
+          message: 'Price-only update preserved unrecognized legacy YouCan variants',
+          codProductId,
+          context: toJsonValue({ unmatchedVariantIds: priced.unmatchedVariantIds }),
+        });
+      }
       await youcan.updateProduct(product.mapping.youCanProductId, {
         name: remote.name,
         has_variants: booleanValue(remote.has_variants) ?? variants.length > 0,
