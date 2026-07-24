@@ -1,5 +1,7 @@
-const DISALLOWED_SKU_WORDS = /(?:قطعة|قطع|اشتري|buy|bundle|pack|qty|quantity)/i;
-const QUANTITY_SUFFIX = /(?:[-_\s]*(?:Q|X)\d+)$/i;
+// Quantity variants are appended with an explicit separator (for example -Q3).
+// Never strip bare X/Q + digits: COD's random canonical SKUs can legitimately end that way.
+const DISALLOWED_SKU_WORDS = /(?:^|[-_])(قطعة|قطع|اشتري|buy|bundle|pack|qty|quantity)(?:[-_]|$)/i;
+const QUANTITY_SUFFIX = /(?:[-_](?:Q|X)\d+)$/i;
 
 export function cleanCodSku(value: string | null | undefined) {
   const sku = String(value ?? '')
