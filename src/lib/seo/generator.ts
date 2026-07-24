@@ -59,7 +59,8 @@ export async function generateSeoMetadata(input: {
   // with 202/502. Send only direct HTTPS URLs that preflight as real images.
   const aiImageUrls = await filterAiReachableImageUrls(imageUrls);
 
-  const result = await ai.chatJson<SeoGenerationResult>(
+  const result = await generateWithVisionFallback<SeoGenerationResult>(
+    ai,
     [
       {
         role: 'system',
@@ -112,11 +113,14 @@ export async function generateSeoMetadata(input: {
               },
             }),
           },
-          ...aiImageUrls.slice(0, 6).map((url) => ({ type: 'image_url' as const, image_url: { url } })),
+          ...(aiImageUrls.length > 0
+            ? aiImageUrls.slice(0, 6).map((url) => ({ type: 'image_url' as const, image_url: { url } }))
+            : []),
         ],
       },
     ],
     'SeoGenerationResult object with Arabic productType, useCase, title, HTML Arabic description 1000-1500 chars, metaTitle, metaDescription, keywords, safeSellingPoints, complianceNotes, sourceSummary, categorySlug, categoryConfidence, latin slug, optional selectedImageUrls.',
+    aiImageUrls.length > 0,
   );
 
   const selectedCategorySlug = categoryList.some((category) => category.slug === result.categorySlug)
@@ -135,6 +139,26 @@ export async function generateSeoMetadata(input: {
     aiModel: ai.model,
     rawAiResponse: result,
   };
+}
+
+async function generateWithVisionFallback<T>(
+  ai: AiChatClient,
+  messages: Parameters<AiChatClient['chatJson']>[0],
+  schemaHint: string,
+  hasImages: boolean,
+) {
+  try {
+    return await ai.chatJson<T>(messages, schemaHint);
+  } catch (error) {
+    if (!hasImages) throw error;
+    const textOnly = messages.map((message) => ({
+      ...message,
+      content: Array.isArray(message.content)
+        ? message.content.filter((part) => part.type === 'text')
+        : message.content,
+    }));
+    return ai.chatJson<T>(textOnly, schemaHint);
+  }
 }
 
 async function filterAiReachableImageUrls(values: string[]) {
