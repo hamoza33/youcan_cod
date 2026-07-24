@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
 import { SETTINGS, SETTINGS_BY_KEY } from '@/lib/settings/registry';
-import { getRuntimeSettings, getSettingValue, settingNumber, settingStringArray, upsertSettingValue } from '@/lib/settings/runtime';
+import { getRuntimeSettings, getSettingValue, settingNumber, settingString, settingStringArray, upsertSettingValue } from '@/lib/settings/runtime';
 import { enqueueJob, refreshStockSyncScheduler } from '@/lib/jobs/queue';
 import { syncAllSerpApiAccountUsage, syncSerpApiAccountUsage, usageMonth } from '@/lib/products/serpapi-key-pool';
 import { testAiProvider } from '@/lib/ai/provider-chain';
@@ -190,10 +190,23 @@ function normalizeMonthlyLimit(value: FormDataEntryValue | null) {
 
 async function syncStockSchedulerFromSettings() {
   const settings = await getRuntimeSettings();
-  await refreshStockSyncScheduler({
-    enabledCountries: settingStringArray(settings, 'country.enabled'),
-    intervalHours: settingNumber(settings, 'sync.stockIntervalHours', 0),
-  });
+  const enabledCountries = settingStringArray(settings, 'country.enabled');
+  const configuredMode = settingString(settings, 'sync.stockScheduleMode');
+  const intervalHours = settingNumber(settings, 'sync.stockIntervalHours', 24);
+  if (configuredMode === 'interval') {
+    await refreshStockSyncScheduler({ mode: 'interval', enabledCountries, intervalHours });
+    return;
+  }
+  if (configuredMode === 'daily') {
+    await refreshStockSyncScheduler({
+      mode: 'daily',
+      enabledCountries,
+      dailyTime: settingString(settings, 'sync.stockDailyTime') || '03:00',
+      timezone: settingString(settings, 'sync.stockTimezone') || 'UTC',
+    });
+    return;
+  }
+  await refreshStockSyncScheduler({ mode: 'disabled', enabledCountries });
 }
 
 function parseJson(value: FormDataEntryValue | null, fallback: unknown) {

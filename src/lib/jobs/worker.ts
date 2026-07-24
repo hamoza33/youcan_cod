@@ -5,7 +5,7 @@ import { discoverCodProducts, enrichSeo, ensureCodSku, importToYouCan, pushToGmc
 import { syncYouCanCategories } from '@/lib/categories/youcan-sync';
 import { prisma } from '@/lib/db';
 import { logEvent } from '@/lib/logger';
-import { getRuntimeSettings, getSettingValue, settingNumber, settingStringArray } from '@/lib/settings/runtime';
+import { getRuntimeSettings, getSettingValue, settingNumber, settingString, settingStringArray } from '@/lib/settings/runtime';
 
 const jobTypeMap: Record<AutomationJobName, JobType> = {
   'discover-cod-products': JobType.DISCOVER_COD_PRODUCTS,
@@ -84,10 +84,29 @@ async function workerConcurrency() {
 async function configureStockSyncScheduler() {
   const settings = await getRuntimeSettings().catch(() => ({}));
   const enabledCountries = settingStringArray(settings, 'country.enabled') as CountryCode[];
-  const intervalHours = settingNumber(settings, 'sync.stockIntervalHours', 0);
-  await refreshStockSyncScheduler({ enabledCountries, intervalHours }).catch(async (error) => {
-    await logEvent({ source: LogSource.SYSTEM, level: LogLevel.ERROR, message: 'Failed to configure automatic Sync Stock scheduler', context: { error: String(error), intervalHours } });
+  const schedule = stockSyncScheduleFromSettings(settings, enabledCountries);
+  await refreshStockSyncScheduler(schedule).catch(async (error) => {
+    await logEvent({ source: LogSource.SYSTEM, level: LogLevel.ERROR, message: 'Failed to configure automatic Sync Stock scheduler', context: { error: String(error), schedule } });
   });
+}
+
+function stockSyncScheduleFromSettings(settings: Record<string, unknown>, enabledCountries: CountryCode[]) {
+  const configuredMode = settingString(settings, 'sync.stockScheduleMode');
+  // Existing installations used only intervalHours: preserve an enabled legacy interval.
+  const legacyInterval = settingNumber(settings, 'sync.stockIntervalHours', 0);
+  const mode = configuredMode === 'interval' || configuredMode === 'daily'
+    ? configuredMode
+    : configuredMode === 'disabled'
+      ? 'disabled'
+      : legacyInterval > 0 ? 'interval' : 'disabled';
+  if (mode === 'interval') return { mode, enabledCountries, intervalHours: legacyInterval || 24 } as const;
+  if (mode === 'daily') return {
+    mode,
+    enabledCountries,
+    dailyTime: settingString(settings, 'sync.stockDailyTime') || '03:00',
+    timezone: settingString(settings, 'sync.stockTimezone') || 'UTC',
+  } as const;
+  return { mode: 'disabled', enabledCountries } as const;
 }
 
 async function runAutomationJob(name: AutomationJobName, data: AutomationJobData) {

@@ -7,6 +7,7 @@ import { groupedSettings, SETTINGS } from '@/lib/settings/registry';
 import { parseAiProviderOrder } from '@/lib/ai/provider-order';
 import { ensureSettingDefaults, getRuntimeSettings } from '@/lib/settings/runtime';
 import { maskSerpApiKey } from '@/lib/products/serpapi-key-pool';
+import { getStockSyncScheduler } from '@/lib/jobs/queue';
 import { formatDate } from '@/lib/utils';
 
 export const dynamic = 'force-dynamic';
@@ -18,6 +19,7 @@ export default async function SettingsPage() {
   const discounts = await prisma.discountRule.findMany({ orderBy: { sortOrder: 'asc' } });
   const serpApiKeys = await prisma.imageSearchApiKey.findMany({ where: { provider: 'SERPAPI' }, orderBy: { createdAt: 'asc' } });
   const groups = groupedSettings();
+  const stockScheduler = await getStockSyncScheduler().catch(() => undefined);
 
   return (
     <>
@@ -28,6 +30,7 @@ export default async function SettingsPage() {
 
       <nav className="sticky top-2 z-10 mb-6 flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-soft backdrop-blur" aria-label="Settings page sections">
         <a href="#project-settings" className="rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100">Project settings</a>
+        <a href="#stock-sync-schedule" className="rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100">Stock sync schedule</a>
         {groups.map(({ group }) => <a key={group} href={`#${sectionId(group)}`} className="rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100">{group}</a>)}
         <a href="#gmc-currency-update" className="rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100">GMC currency update</a>
         <a href="#serpapi-keys" className="rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100">SerpApi keys</a>
@@ -63,6 +66,8 @@ export default async function SettingsPage() {
               Do not paste secrets into Git. Values saved here are stored in the database and masked in the browser by default.
             </p>
           </div>
+
+          <StockSyncScheduleStatus scheduler={stockScheduler} />
 
           <GmcCurrencyUpdatePanel currency={String(values['gmc.currency'] ?? 'SAR')} />
 
@@ -116,6 +121,24 @@ export default async function SettingsPage() {
         </aside>
       </div>
     </>
+  );
+}
+
+function StockSyncScheduleStatus({ scheduler }: { scheduler?: { next?: number; pattern?: string; every?: number; tz?: string } }) {
+  return (
+    <section id="stock-sync-schedule" className="scroll-mt-24 rounded-3xl border border-blue-200 bg-blue-50 p-6 shadow-soft">
+      <h2 className="text-lg font-bold text-ink">Automatic Sync Stock</h2>
+      <p className="mt-2 text-sm leading-6 text-slate-600">
+        Configure the schedule in <strong>Country and sync</strong>, then save all project settings. Scheduled runs use the same Sync Stock job as the dashboard button and cover all enabled stock-sync countries.
+      </p>
+      {scheduler ? (
+        <div className="mt-4 space-y-1 rounded-2xl bg-white/80 p-3 text-xs font-semibold text-blue-900">
+          <p>Status: Enabled</p>
+          <p>Schedule: {scheduler.pattern ? `${scheduler.pattern} (${scheduler.tz ?? 'UTC'})` : `Every ${Math.round(Number(scheduler.every ?? 0) / 3_600_000)} hour(s)`}</p>
+          <p>Next run: {scheduler.next ? formatDate(new Date(scheduler.next)) : 'Pending scheduler calculation'}</p>
+        </div>
+      ) : <p className="mt-4 rounded-2xl bg-white/80 p-3 text-xs font-semibold text-slate-600">Status: Disabled</p>}
+    </section>
   );
 }
 

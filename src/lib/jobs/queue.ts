@@ -61,18 +61,25 @@ export async function enqueueJob(name: AutomationJobName, data: AutomationJobDat
   });
 }
 
-export async function refreshStockSyncScheduler(input: { enabledCountries: Array<CountryCode | string>; intervalHours: number }) {
+export type StockSyncSchedule =
+  | { mode: 'disabled'; enabledCountries: Array<CountryCode | string> }
+  | { mode: 'interval'; enabledCountries: Array<CountryCode | string>; intervalHours: number }
+  | { mode: 'daily'; enabledCountries: Array<CountryCode | string>; dailyTime: string; timezone: string };
+
+export async function refreshStockSyncScheduler(input: StockSyncSchedule) {
   const automationQueue = getAutomationQueue();
   const schedulerId = 'sync-stock-automatic';
-  if (!Number.isFinite(input.intervalHours) || input.intervalHours <= 0 || input.enabledCountries.length === 0) {
+  if (input.mode === 'disabled' || input.enabledCountries.length === 0) {
     await automationQueue.removeJobScheduler(schedulerId).catch(() => false);
     return { enabled: false, schedulerId };
   }
 
-  const intervalMs = Math.max(1, Math.round(input.intervalHours)) * 60 * 60 * 1000;
+  const repeat = input.mode === 'interval'
+    ? { every: normalizeIntervalHours(input.intervalHours) * 60 * 60 * 1000, immediately: false }
+    : dailyRepeatOptions(input.dailyTime, input.timezone);
   await automationQueue.upsertJobScheduler(
     schedulerId,
-    { every: intervalMs, immediately: false },
+    repeat,
     {
       name: 'sync-stock',
       data: { force: true },
@@ -82,5 +89,29 @@ export async function refreshStockSyncScheduler(input: { enabledCountries: Array
       },
     },
   );
-  return { enabled: true, schedulerId, intervalMs, countries: input.enabledCountries };
+  return { enabled: true, schedulerId, mode: input.mode, repeat, countries: input.enabledCountries };
+}
+
+export async function getStockSyncScheduler() {
+  return getAutomationQueue().getJobScheduler('sync-stock-automatic');
+}
+
+function normalizeIntervalHours(value: number) {
+  if (!Number.isFinite(value) || value < 1) throw new Error('Sync Stock interval must be at least 1 hour.');
+  return Math.round(value);
+}
+
+function dailyRepeatOptions(time: string, timezone: string) {
+  const match = /^(\d{2}):(\d{2})$/.exec(time.trim());
+  if (!match) throw new Error('Daily Sync Stock time must use HH:MM format.');
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour > 23 || minute > 59) throw new Error('Daily Sync Stock time is invalid.');
+  const tz = timezone.trim() || 'UTC';
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz }).format();
+  } catch {
+    throw new Error(`Invalid Sync Stock timezone: ${tz}`);
+  }
+  return { pattern: `${minute} ${hour} * * *`, tz, immediately: false };
 }
