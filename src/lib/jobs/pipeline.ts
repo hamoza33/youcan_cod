@@ -21,6 +21,7 @@ import { calculateQuantityPrice, roundSellingPriceToNine, type PricingFormula } 
 import { codBasePrice, codProductCost, numeric } from '@/lib/products/cod-pricing';
 import { arabicQuantityValue } from '@/lib/products/arabic-content';
 import { buildYouCanProductPayload } from '@/lib/products/youcan-payload';
+import { priceYouCanQuantityVariants } from '@/lib/products/youcan-variant-pricing';
 import { selectAccurateProductImages, REQUIRED_PRODUCT_IMAGE_COUNT, buildProductImageSearchQuery } from '@/lib/products/image-enrichment';
 import { validateBeforeYouCanImport, shouldMarkNeedsReview } from '@/lib/products/import-validation';
 import { requireCleanCodSku } from '@/lib/products/sku';
@@ -952,14 +953,13 @@ export async function syncProductPrice(codProductId: string) {
       const youcan = await YouCanClient.create();
       const remote = await youcan.getProduct(product.mapping.youCanProductId, { include: ['variants'] });
       const variants = youCanProductVariants(remote);
-      const rules = await prisma.discountRule.findMany({ where: { isActive: true, quantity: { gt: 1 } }, orderBy: { sortOrder: 'asc' } });
-      const pricedVariants = variants.map((variant, index) => ({
-        // Existing variant id targets the update without resending inventory, image, SKU, or options.
-        ...(variant.id ? { id: variant.id } : { variations: variant.variations }),
-        price: index === 0 ? price : rules[index - 1]
-          ? calculateQuantityPrice(price, rules[index - 1].quantity, Number(rules[index - 1].discountPercent))
-          : Number(variant.price ?? price),
-      }));
+      const rules = await prisma.discountRule.findMany({ where: { isActive: true }, orderBy: { sortOrder: 'asc' } });
+      const singleQuantityLabel = (await getSettingValue<string>('youCan.singleQuantityLabel').catch(() => ''))?.trim() || arabicQuantityValue(1);
+      const priced = priceYouCanQuantityVariants({ variants, unitPrice: price, rules, singleQuantityLabel });
+      if (priced.unmatchedVariantIds.length) {
+        throw new Error(`Cannot safely map YouCan quantity variants: ${priced.unmatchedVariantIds.join(', ')}`);
+      }
+      const pricedVariants = priced.variants;
       await youcan.updateProduct(product.mapping.youCanProductId, {
         name: remote.name,
         has_variants: booleanValue(remote.has_variants) ?? variants.length > 0,
@@ -968,7 +968,7 @@ export async function syncProductPrice(codProductId: string) {
       });
       youCanUpdated = true;
       await prisma.codProduct.update({ where: { id: codProductId }, data: { importStatus: ImportStatus.UPDATED, lastYouCanSyncAt: new Date() } });
-      await logEvent({ source: LogSource.YOUCAN, message: 'Price-only YouCan update completed', codProductId, context: toJsonValue({ price, variantCount: variants.length }) });
+      await logEvent({ source: LogSource.YOUCAN, message: 'Price-only YouCan update completed', codProductId, context: toJsonValue({ price, variantCount: variants.length, mapping: 'quantity-label' }) });
     } catch (error) {
       failures.push(`YouCan price sync failed: ${String(error)}`);
     }
