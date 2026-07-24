@@ -236,13 +236,14 @@ export async function importToYouCan(codProductId: string, options: { enqueueGmc
     const publicUrl = youCanProductPublicUrl(youcanProduct, env.YOUCAN_STORE_URL, youcanProduct.slug ?? seo.slug);
     const variantId = youCanPrimaryVariantId(youcanProduct, sku);
     await prisma.productMapping.upsert({
-      where: { codSku: sku },
+      where: { codProductId },
       update: {
-        codProductId,
+        codSku: sku,
         youCanProductId: youcanProduct.id,
         youCanVariantId: variantId,
         youCanSlug: youcanProduct.slug ?? seo.slug,
         youCanPublicUrl: publicUrl,
+        googleOfferId: product.mapping?.googleOfferId ?? sku,
       },
       create: {
         codProductId,
