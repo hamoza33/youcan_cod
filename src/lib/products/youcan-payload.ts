@@ -1,6 +1,6 @@
 import { Category, CodProduct, DiscountRule, SeoMetadata } from '@prisma/client';
 import { YouCanProductPayload } from '@/lib/integrations/youcan/client';
-import { applyDiscount } from '@/lib/pricing/formula';
+import { calculateQuantityPrice, roundSellingPriceToNine } from '@/lib/pricing/formula';
 import { arabicQuantityOptionName, arabicQuantityValue, enforceArabicDescriptionLength } from '@/lib/products/arabic-content';
 import { requireCleanCodSku } from '@/lib/products/sku';
 
@@ -20,7 +20,7 @@ export function buildYouCanProductPayload(input: {
   relatedProductIds?: string[];
 }): YouCanProductPayload {
   const cleanSku = requireCleanCodSku(input.sku);
-  const price = Number(input.product.price ?? input.product.productCost ?? 0);
+  const price = roundSellingPriceToNine(Number(input.product.price ?? input.product.productCost ?? 0));
   const imageUrls = proxiedImageUrls(input.product, input.appBaseUrl);
   const activeRules = input.discountRules.filter((rule) => rule.isActive && rule.quantity > 1).sort((a, b) => a.quantity - b.quantity);
   const description = enforceArabicDescriptionLength(input.seo.description);
@@ -74,7 +74,7 @@ export function buildYouCanProductPayload(input: {
       },
       ...activeRules.map((rule) => ({
         variations: { [optionName]: quantityLabel(rule) },
-        price: applyDiscount(price * rule.quantity, Number(rule.discountPercent)),
+        price: calculateQuantityPrice(price, rule.quantity, Number(rule.discountPercent)),
         sku: cleanSku,
         inventory: input.product.stockQuantity ?? undefined,
         image: imageUrls[0],

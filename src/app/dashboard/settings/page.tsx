@@ -99,40 +99,19 @@ export default async function SettingsPage() {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h2 className="text-lg font-bold text-ink">Discount variant rules</h2>
-                <p className="mt-2 text-sm text-slate-500">Variant prices are recalculated from these rules whenever products are imported to YouCan. The label field is the YouCan button text, e.g. قطعة واحدة, خمس قطع.</p>
+                <p className="mt-2 text-sm text-slate-500">These three required YouCan options are fixed so deleted legacy rules cannot return after an app restart.</p>
               </div>
               <button formAction={triggerBulkDiscountVariantUpdate} className="rounded-2xl bg-slate-900 px-4 py-2 text-xs font-bold text-white">Bulk update YouCan variants</button>
             </div>
             <div className="mt-4 space-y-3">
               {discounts.map((rule) => (
                 <div key={rule.id} className="rounded-2xl bg-slate-50 p-3 text-sm">
-                  <input type="hidden" name="discount.id" value={rule.id} />
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <input name={`discount.${rule.id}.quantity`} type="number" defaultValue={rule.quantity} className="input" />
-                    <input name={`discount.${rule.id}.discountPercent`} type="number" step="0.01" defaultValue={String(rule.discountPercent)} className="input" />
-                    <input name={`discount.${rule.id}.label`} defaultValue={rule.label} placeholder="YouCan variant label, e.g. خمس قطع" className="input sm:col-span-2" />
-                    <input name={`discount.${rule.id}.sortOrder`} type="number" defaultValue={rule.sortOrder} className="input" />
-                    <select name={`discount.${rule.id}.isActive`} defaultValue={String(rule.isActive)} className="input">
-                      <option value="true">Active</option>
-                      <option value="false">Inactive</option>
-                    </select>
-                    <label className="inline-flex items-center gap-2 rounded-xl border border-rose-100 bg-white px-3 py-2 text-xs font-bold text-rose-700 sm:col-span-2">
-                      <input type="checkbox" name="discount.remove" value={rule.id} /> Remove this rule
-                    </label>
-                  </div>
+                  <p className="font-bold text-ink" dir="rtl">{rule.label}</p>
+                  <p className="mt-1 text-xs font-semibold text-slate-500">Quantity {rule.quantity} · Discount {String(rule.discountPercent)}%</p>
                 </div>
               ))}
-              <div className="rounded-2xl border border-dashed border-slate-200 p-3 text-sm">
-                <p className="mb-2 font-bold text-ink">Add rule</p>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <input name="discount.new.quantity" type="number" placeholder="Quantity" className="input" />
-                  <input name="discount.new.discountPercent" type="number" step="0.01" placeholder="Discount %" className="input" />
-                  <input name="discount.new.label" placeholder="YouCan variant label, e.g. خمس قطع" className="input sm:col-span-2" />
-                  <input name="discount.new.sortOrder" type="number" placeholder="Sort order" className="input sm:col-span-2" />
-                </div>
-              </div>
             </div>
-            <button className="mt-4 rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold">Save discount rules</button>
+            <button className="mt-4 rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold">Keep only these three rules</button>
           </form>
         </aside>
       </div>

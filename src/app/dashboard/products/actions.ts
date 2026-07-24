@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { prisma } from '@/lib/db';
 import { enqueueJob } from '@/lib/jobs/queue';
-import { roundMoney } from '@/lib/pricing/formula';
+import { roundSellingPriceToNine } from '@/lib/pricing/formula';
 import { CountryCode, GmcStatus, ImportStatus, Prisma, SeoStatus, StockStatus, VisibilityStatus } from '@prisma/client';
 
 const productIdSchema = z.string().min(1);
@@ -155,7 +155,7 @@ export async function bulkAction(input: z.infer<typeof bulkSchema>) {
       products.map(async (product) => {
         await prisma.codProduct.update({
           where: { id: product.id },
-          data: { price: roundMoney(Number(product.price ?? 0) * multiplier) },
+          data: { price: roundSellingPriceToNine(Number(product.price ?? 0) * multiplier) },
         });
         await enqueueJob('import-youcan', { codProductId: product.id, force: true });
       }),
@@ -164,7 +164,7 @@ export async function bulkAction(input: z.infer<typeof bulkSchema>) {
   if (data.action === 'price-fixed' && data.fixedPrice != null) {
     await Promise.all(
       data.ids.map(async (id) => {
-        await prisma.codProduct.update({ where: { id }, data: { price: roundMoney(data.fixedPrice!) } });
+        await prisma.codProduct.update({ where: { id }, data: { price: roundSellingPriceToNine(data.fixedPrice!) } });
         await enqueueJob('import-youcan', { codProductId: id, force: true });
       }),
     );
@@ -216,7 +216,7 @@ export async function priceOnlyPercentageAction(input: z.infer<typeof priceOnlyS
 
   await prisma.$transaction(products.map((product) => prisma.codProduct.update({
     where: { id: product.id },
-    data: { price: roundMoney(Number(product.price ?? 0) * multiplier), lastError: null },
+    data: { price: roundSellingPriceToNine(Number(product.price ?? 0) * multiplier), lastError: null },
   })));
   // External writes happen only in worker jobs, never in this server action.
   await Promise.all(products.map((product) => enqueueJob('sync-product-price', { codProductId: product.id, force: true })));

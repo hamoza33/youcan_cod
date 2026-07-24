@@ -1,4 +1,4 @@
-import { calculatePrice, type PricingFormula } from '@/lib/pricing/formula';
+import { calculatePrice, roundSellingPriceToNine, type PricingFormula } from '@/lib/pricing/formula';
 
 const recommendedPriceKeys = [
   'recommended_selling_price',
@@ -45,7 +45,7 @@ export function codProductCost(raw: Record<string, unknown>) {
 }
 
 export function codBasePrice(raw: Record<string, unknown>, formula: PricingFormula) {
-  return codRecommendedPrice(raw) ?? calculatePrice(codProductCost(raw), formula);
+  return roundSellingPriceToNine(codRecommendedPrice(raw) ?? calculatePrice(codProductCost(raw), formula));
 }
 
 export function numeric(value: unknown) {

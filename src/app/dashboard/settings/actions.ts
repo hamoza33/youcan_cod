@@ -3,7 +3,6 @@
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
 import { SETTINGS, SETTINGS_BY_KEY } from '@/lib/settings/registry';
-import { arabicQuantityValue } from '@/lib/products/arabic-content';
 import { getRuntimeSettings, getSettingValue, settingNumber, settingStringArray, upsertSettingValue } from '@/lib/settings/runtime';
 import { enqueueJob, refreshStockSyncScheduler } from '@/lib/jobs/queue';
 import { syncAllSerpApiAccountUsage, syncSerpApiAccountUsage, usageMonth } from '@/lib/products/serpapi-key-pool';
@@ -63,55 +62,42 @@ export async function saveCategories(formData: FormData) {
   revalidatePath('/dashboard/products');
 }
 
-export async function saveDiscountRules(formData: FormData) {
-  await persistDiscountRules(formData);
+export async function saveDiscountRules() {
+  await persistDiscountRules();
   revalidatePath('/dashboard/settings');
   revalidatePath('/dashboard/products');
 }
 
-export async function triggerBulkDiscountVariantUpdate(formData: FormData) {
-  await persistDiscountRules(formData);
+export async function triggerBulkDiscountVariantUpdate() {
+  await persistDiscountRules();
   await enqueueJob('bulk-update-discount-variants', { force: true });
   revalidatePath('/dashboard/settings');
   revalidatePath('/dashboard/products');
 }
 
-async function persistDiscountRules(formData: FormData) {
-  const ids = formData.getAll('discount.id').map(String);
-  const removeIds = new Set(formData.getAll('discount.remove').map(String));
-  for (const id of ids) {
-    if (removeIds.has(id)) {
-      await prisma.discountRule.delete({ where: { id } }).catch(() => undefined);
-      continue;
-    }
-    await prisma.discountRule.update({
-      where: { id },
-      data: {
-        quantity: Number(formData.get(`discount.${id}.quantity`) ?? 1),
-        discountPercent: Number(formData.get(`discount.${id}.discountPercent`) ?? 0),
-        label: String(formData.get(`discount.${id}.label`) ?? '').trim() || arabicQuantityValue(Number(formData.get(`discount.${id}.quantity`) ?? 1)),
-        isActive: formData.get(`discount.${id}.isActive`) === 'true',
-        sortOrder: Number(formData.get(`discount.${id}.sortOrder`) ?? 0),
-      },
-    });
-  }
+async function persistDiscountRules() {
+  const canonicalRules = [
+    { quantity: 1, discountPercent: 0, label: 'أريد واحدة فقط', sortOrder: 10 },
+    { quantity: 3, discountPercent: 33, label: 'أريد اثنان + واحدة مجانا', sortOrder: 20 },
+    { quantity: 5, discountPercent: 40, label: 'أريد ثلاثة + اثنين مجانا', sortOrder: 30 },
+  ] as const;
 
-  const newQuantity = Number(formData.get('discount.new.quantity') ?? 0);
-  const newDiscountPercent = Number(formData.get('discount.new.discountPercent') ?? 0);
-  if (newQuantity > 1 && Number.isFinite(newDiscountPercent) && newDiscountPercent >= 0) {
-    const label = String(formData.get('discount.new.label') ?? '').trim() || arabicQuantityValue(newQuantity);
-    await prisma.discountRule.create({
-      data: {
-        quantity: newQuantity,
-        discountPercent: newDiscountPercent,
-        label,
-        isActive: true,
-        sortOrder: Number(formData.get('discount.new.sortOrder') ?? 100),
+  await prisma.$transaction(async (tx) => {
+    await tx.discountRule.deleteMany({
+      where: {
+        NOT: {
+          OR: canonicalRules.map((rule) => ({ quantity: rule.quantity, discountPercent: rule.discountPercent })),
+        },
       },
-    }).catch(async () => {
-      await prisma.discountRule.updateMany({ where: { quantity: newQuantity }, data: { discountPercent: newDiscountPercent, label, isActive: true } });
     });
-  }
+    for (const rule of canonicalRules) {
+      await tx.discountRule.upsert({
+        where: { quantity_discountPercent: { quantity: rule.quantity, discountPercent: rule.discountPercent } },
+        update: { label: rule.label, sortOrder: rule.sortOrder, isActive: true },
+        create: { ...rule, isActive: true },
+      });
+    }
+  });
 }
 
 export async function readSecretSetting(key: string) {

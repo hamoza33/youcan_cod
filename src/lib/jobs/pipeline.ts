@@ -17,7 +17,7 @@ import { logEvent } from '@/lib/logger';
 import { CodDropProduct, CodNetworkClient, type CodSellerProduct, codImageUrls, isCountryProduct } from '@/lib/integrations/cod-network/client';
 import { enqueueJob } from '@/lib/jobs/queue';
 import { generateSeoMetadata } from '@/lib/seo/generator';
-import { applyDiscount, type PricingFormula } from '@/lib/pricing/formula';
+import { calculateQuantityPrice, roundSellingPriceToNine, type PricingFormula } from '@/lib/pricing/formula';
 import { codBasePrice, codProductCost, numeric } from '@/lib/products/cod-pricing';
 import { arabicQuantityValue } from '@/lib/products/arabic-content';
 import { buildYouCanProductPayload } from '@/lib/products/youcan-payload';
@@ -825,7 +825,7 @@ async function buildDiscountVariantUpdatePayload(
   const activeRules = discountRules.filter((rule) => rule.quantity > 1).sort((a, b) => a.quantity - b.quantity);
   const optionName = (await getSettingValue<string>('youCan.quantityOptionName').catch(() => ''))?.trim() || 'الكمية';
   const singleQuantityLabel = (await getSettingValue<string>('youCan.singleQuantityLabel').catch(() => ''))?.trim() || arabicQuantityValue(1);
-  const price = Number(product.price ?? remote.price ?? 0);
+  const price = roundSellingPriceToNine(Number(product.price ?? remote.price ?? 0));
   const visible = product.visibilityStatus === VisibilityStatus.VISIBLE && product.stockStatus !== StockStatus.OUT_OF_STOCK;
   const sku = product.codSku ?? stringValue(remote.sku) ?? '';
 
@@ -859,7 +859,7 @@ async function buildDiscountVariantUpdatePayload(
       },
       ...activeRules.map((rule) => ({
         variations: { [optionName]: rule.label?.trim() || arabicQuantityValue(rule.quantity) },
-        price: applyDiscount(price * rule.quantity, Number(rule.discountPercent)),
+        price: calculateQuantityPrice(price, rule.quantity, Number(rule.discountPercent)),
         sku,
         inventory: product.stockQuantity ?? undefined,
         is_default: false,
@@ -934,8 +934,12 @@ export async function syncProductPrice(codProductId: string) {
     where: { id: codProductId },
     include: { mapping: true },
   });
-  const price = Number(product.price);
-  if (!Number.isFinite(price) || price < 0) throw new Error('Cannot sync price: local product price is invalid.');
+  const storedPrice = Number(product.price);
+  if (!Number.isFinite(storedPrice) || storedPrice <= 0) throw new Error('Cannot sync price: local product price is invalid.');
+  const price = roundSellingPriceToNine(storedPrice);
+  if (price !== storedPrice) {
+    await prisma.codProduct.update({ where: { id: codProductId }, data: { price } });
+  }
 
   const failures: string[] = [];
   let youCanUpdated = false;
@@ -953,7 +957,7 @@ export async function syncProductPrice(codProductId: string) {
         // Existing variant id targets the update without resending inventory, image, SKU, or options.
         ...(variant.id ? { id: variant.id } : { variations: variant.variations }),
         price: index === 0 ? price : rules[index - 1]
-          ? applyDiscount(price * rules[index - 1].quantity, Number(rules[index - 1].discountPercent))
+          ? calculateQuantityPrice(price, rules[index - 1].quantity, Number(rules[index - 1].discountPercent))
           : Number(variant.price ?? price),
       }));
       await youcan.updateProduct(product.mapping.youCanProductId, {

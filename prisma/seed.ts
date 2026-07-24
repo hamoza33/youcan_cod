@@ -1,10 +1,15 @@
 import { PrismaClient, SettingKind } from '@prisma/client';
 import { categorySeedData } from '../src/lib/categories/main-categories';
 import { SETTINGS } from '../src/lib/settings/registry';
-import { arabicQuantityValue } from '../src/lib/products/arabic-content';
 import { toJsonValue } from '../src/lib/http/client';
 
 const prisma = new PrismaClient();
+
+const CANONICAL_DISCOUNT_RULES = [
+  { quantity: 1, discountPercent: 0, label: 'أريد واحدة فقط', sortOrder: 10 },
+  { quantity: 3, discountPercent: 33, label: 'أريد اثنان + واحدة مجانا', sortOrder: 20 },
+  { quantity: 5, discountPercent: 40, label: 'أريد ثلاثة + اثنين مجانا', sortOrder: 30 },
+] as const;
 
 async function main() {
   for (const category of categorySeedData()) {
@@ -23,18 +28,22 @@ async function main() {
     });
   }
 
-  await prisma.discountRule.createMany({
-    data: [
-      { quantity: 2, discountPercent: 20, label: arabicQuantityValue(2), sortOrder: 10 },
-      { quantity: 3, discountPercent: 30, label: arabicQuantityValue(3), sortOrder: 20 },
-      { quantity: 5, discountPercent: 30, label: arabicQuantityValue(5), sortOrder: 30 },
-    ],
-    skipDuplicates: true,
+  await prisma.$transaction(async (tx) => {
+    await tx.discountRule.deleteMany({
+      where: {
+        NOT: {
+          OR: CANONICAL_DISCOUNT_RULES.map((rule) => ({ quantity: rule.quantity, discountPercent: rule.discountPercent })),
+        },
+      },
+    });
+    for (const rule of CANONICAL_DISCOUNT_RULES) {
+      await tx.discountRule.upsert({
+        where: { quantity_discountPercent: { quantity: rule.quantity, discountPercent: rule.discountPercent } },
+        update: { label: rule.label, sortOrder: rule.sortOrder, isActive: true },
+        create: { ...rule, isActive: true },
+      });
+    }
   });
-
-  await prisma.discountRule.updateMany({ where: { label: 'Buy 2: 20% off' }, data: { label: arabicQuantityValue(2) } });
-  await prisma.discountRule.updateMany({ where: { label: 'Buy 3: 30% off' }, data: { label: arabicQuantityValue(3) } });
-  await prisma.discountRule.updateMany({ where: { label: 'Buy 5: 30% off' }, data: { label: arabicQuantityValue(5) } });
 
   const settings = SETTINGS.map((definition) => [
     definition.key,
