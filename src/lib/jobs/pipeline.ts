@@ -75,9 +75,10 @@ export async function ensureCodSku(codProductId: string) {
     if (cleanSku !== product.codSku) {
       await prisma.codProduct.update({ where: { id: codProductId }, data: { codSku: cleanSku } });
     }
+    await releaseDuplicateSkuOwner(cleanSku, codProductId);
     await prisma.productMapping.upsert({
-      where: { codSku: cleanSku },
-      update: { codProductId, codSku: cleanSku, googleOfferId: cleanSku },
+      where: { codProductId },
+      update: { codSku: cleanSku, googleOfferId: cleanSku },
       create: { codProductId, codSku: cleanSku, googleOfferId: cleanSku },
     });
     await enqueueJob('enrich-seo', { codProductId });
@@ -88,6 +89,7 @@ export async function ensureCodSku(codProductId: string) {
   const result = await client.ensureSellerProduct((product.rawPayload ?? {}) as CodDropProduct);
   const cleanSku = requireCleanCodSku(result.sku);
 
+  await releaseDuplicateSkuOwner(cleanSku, codProductId);
   const formula = await getPricingFormula();
   const sellerProduct = result.sellerProduct as Record<string, unknown>;
   const sellerImageUrls = codImageUrls(result.sellerProduct);
@@ -108,14 +110,32 @@ export async function ensureCodSku(codProductId: string) {
   });
 
   await prisma.productMapping.upsert({
-    where: { codSku: cleanSku },
-    update: { codProductId, codSku: cleanSku, googleOfferId: cleanSku },
+    where: { codProductId },
+    update: { codSku: cleanSku, googleOfferId: cleanSku },
     create: { codProductId, codSku: cleanSku, googleOfferId: cleanSku },
   });
 
   await logEvent({ source: LogSource.COD, message: `Confirmed COD SKU ${cleanSku}`, codProductId });
   await enqueueJob('enrich-seo', { codProductId });
   return cleanSku;
+}
+
+
+async function releaseDuplicateSkuOwner(sku: string, canonicalProductId: string) {
+  const owner = await prisma.codProduct.findUnique({ where: { codSku: sku }, select: { id: true, name: true } });
+  if (!owner || owner.id === canonicalProductId) return;
+
+  await prisma.$transaction([
+    prisma.productMapping.deleteMany({ where: { codProductId: owner.id } }),
+    prisma.codProduct.delete({ where: { id: owner.id } }),
+  ]);
+  await logEvent({
+    source: LogSource.COD,
+    level: LogLevel.WARN,
+    message: `Merged duplicate local COD record that owned SKU ${sku}`,
+    codProductId: canonicalProductId,
+    context: toJsonValue({ duplicateProductId: owner.id, duplicateName: owner.name, sku }),
+  });
 }
 
 export async function enrichSeo(codProductId: string, force = false) {
