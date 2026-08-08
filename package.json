@@ -20,6 +20,7 @@
     "import:single": "tsx scripts/import-single-product.ts",
     "recover:failed-products": "tsx scripts/recover-failed-products.ts",
     "remediate:google-review": "tsx scripts/remediate-google-review.ts",
+    "update:store-policies": "tsx scripts/update-store-policies.ts",
     "check": "npm run typecheck && npm run lint && npm run build"
   },
   "dependencies": {
