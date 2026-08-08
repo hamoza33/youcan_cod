@@ -8,6 +8,17 @@ type PageUpdate = {
   meta: { title: string; description: string };
 };
 
+type CheckoutField = {
+  custom: boolean;
+  name?: string;
+  display_name?: string;
+  placeholder?: string;
+  type?: string;
+  options?: string[];
+  required: boolean;
+  enabled: boolean;
+};
+
 const updates: PageUpdate[] = [
   {
     id: '1697cff9-8bc0-48e3-a06f-dcdbdfaa6099',
@@ -54,6 +65,34 @@ async function main() {
     results.push({ slug: update.slug, status: response.status, ok: response.ok, body: await response.json() });
     if (!response.ok) throw new Error(`Failed to update ${update.slug}: ${response.status}`);
   }
+
+  const checkoutResponse = await fetch('https://api.youcan.shop/settings/checkout/fields/', {
+    headers: { Accept: 'application/json', Authorization: authorization },
+  });
+  const checkoutBody = (await checkoutResponse.json()) as { data?: CheckoutField[] } | CheckoutField[];
+  if (!checkoutResponse.ok) throw new Error(`Failed to read checkout fields: ${checkoutResponse.status}`);
+
+  const checkoutFields = Array.isArray(checkoutBody) ? checkoutBody : checkoutBody.data;
+  if (!checkoutFields?.length) throw new Error('YouCan returned no checkout fields; refusing to overwrite the checkout form.');
+
+  const normalizedFields = checkoutFields.map((field) =>
+    field.name === 'saudiNationalAddress'
+      ? { ...field, display_name: 'National address / العنوان الوطني', required: true }
+      : field,
+  );
+  if (!normalizedFields.some((field) => field.name === 'saudiNationalAddress')) {
+    throw new Error('The Saudi national address field was not found; refusing to overwrite the checkout form.');
+  }
+
+  const checkoutUpdateResponse = await fetch('https://api.youcan.shop/settings/checkout/fields/', {
+    method: 'PUT',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', Authorization: authorization },
+    body: JSON.stringify({ data: normalizedFields }),
+  });
+  const checkoutUpdateBody = await checkoutUpdateResponse.json();
+  results.push({ slug: 'checkout-fields', status: checkoutUpdateResponse.status, ok: checkoutUpdateResponse.ok, body: checkoutUpdateBody });
+  if (!checkoutUpdateResponse.ok) throw new Error(`Failed to update checkout fields: ${checkoutUpdateResponse.status}`);
+
   console.log(JSON.stringify(results, null, 2));
 }
 
