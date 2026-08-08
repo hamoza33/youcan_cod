@@ -826,6 +826,7 @@ export async function updateAllDiscountVariantsOnYouCan() {
     take: normalizeLimit,
   });
   const youcan = await YouCanClient.create();
+  const delayMs = positiveInteger(process.env.YOUCAN_NORMALIZE_DELAY_MS) ?? 750;
   let updated = 0;
   let failed = 0;
 
@@ -861,6 +862,7 @@ export async function updateAllDiscountVariantsOnYouCan() {
       await prisma.codProduct.update({ where: { id: product.id }, data: { lastError: String(error) } });
       await logEvent({ source: LogSource.YOUCAN, level: LogLevel.ERROR, message: 'Failed to replace legacy YouCan variants with configured variants', codProductId: product.id, context: toJsonValue({ error: errorToJson(error) }) });
     }
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
 
   await logEvent({ source: LogSource.YOUCAN, message: `Bulk variant replacement finished: ${updated} updated, ${failed} failed`, context: toJsonValue({ total: products.length, updated, failed, mode: 'replace-legacy-with-configured-only' }) });
@@ -871,6 +873,13 @@ function positiveInteger(value: string | undefined) {
   if (!value) return undefined;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function isCloudflareChallenge(error: unknown) {
+  return error instanceof ApiError
+    && error.status === 403
+    && typeof error.payload === 'string'
+    && /cloudflare|challenge-platform|just a moment/i.test(error.payload);
 }
 
 export async function remediateMerchantCatalog() {
@@ -894,6 +903,7 @@ export async function remediateMerchantCatalog() {
       await excludeCodProduct(product, reasons);
       excluded += 1;
     } catch (error) {
+      if (isCloudflareChallenge(error)) throw error;
       failed += 1;
       await prisma.codProduct.update({ where: { id: product.id }, data: { lastError: String(error) } });
     }
