@@ -31,6 +31,8 @@ export type MerchantProductInput = {
 export type MerchantProductResponse = {
   name?: string;
   product?: string;
+  base64EncodedName?: string;
+  base64EncodedProduct?: string;
   offerId?: string;
   productStatus?: unknown;
   destinationStatuses?: unknown;
@@ -77,7 +79,7 @@ export class GoogleMerchantClient {
   async getProductStatus(productId: string) {
     const { accountId } = this.requireIds();
     const token = await this.getAccessToken();
-    const encodedProductId = encodeURIComponent(productId);
+    const encodedProductId = encodeURIComponent(merchantResourceId(productId));
     const url = `https://merchantapi.googleapis.com/products/v1/accounts/${accountId}/products/${encodedProductId}`;
     return requestJson<MerchantProductResponse>(url, {
       headers: { Authorization: `Bearer ${token}` },
@@ -98,16 +100,30 @@ export class GoogleMerchantClient {
   private async patchProductPriceFields(input: { productInputId: string; price: MerchantPrice }, updateMask: string) {
     const { accountId, dataSourceId } = this.requireIds();
     const token = await this.getAccessToken();
-    const encodedInputId = encodeURIComponent(input.productInputId);
+    const normalizedInputId = merchantResourceId(input.productInputId);
+    const encodedInputId = encodeURIComponent(normalizedInputId);
     const dataSource = encodeURIComponent(`accounts/${accountId}/dataSources/${dataSourceId}`);
     const url = `https://merchantapi.googleapis.com/products/v1/accounts/${accountId}/productInputs/${encodedInputId}?dataSource=${dataSource}&updateMask=${encodeURIComponent(updateMask)}`;
     return requestJson<MerchantProductResponse>(url, {
       method: 'PATCH',
       headers: { Authorization: `Bearer ${token}` },
       body: JSON.stringify({
-        name: `accounts/${accountId}/productInputs/${input.productInputId}`,
+        name: `accounts/${accountId}/productInputs/${normalizedInputId}`,
         productAttributes: { price: input.price },
       }),
+      source: LogSource.GMC,
+    });
+  }
+
+  async deleteProductInput(input: { productInputId: string }) {
+    const { accountId, dataSourceId } = this.requireIds();
+    const token = await this.getAccessToken();
+    const encodedInputId = encodeURIComponent(merchantResourceId(input.productInputId));
+    const dataSource = encodeURIComponent(`accounts/${accountId}/dataSources/${dataSourceId}`);
+    const url = `https://merchantapi.googleapis.com/products/v1/accounts/${accountId}/productInputs/${encodedInputId}?dataSource=${dataSource}`;
+    return requestJson<null>(url, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
       source: LogSource.GMC,
     });
   }
@@ -133,4 +149,15 @@ export class GoogleMerchantClient {
 
 export function priceToMicros(amount: number) {
   return String(Math.round(amount * 1_000_000));
+}
+
+export function merchantResourceId(value: string) {
+  let normalized = value.trim();
+  try {
+    normalized = decodeURIComponent(normalized);
+  } catch {
+    // Preserve already-decoded identifiers.
+  }
+  normalized = normalized.replace(/^.*\/(?:products|productInputs)\//, '');
+  return normalized.includes('~') ? Buffer.from(normalized).toString('base64url') : normalized.replace(/=+$/, '');
 }

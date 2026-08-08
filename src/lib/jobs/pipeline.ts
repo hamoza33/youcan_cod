@@ -20,7 +20,8 @@ import { generateSeoMetadata } from '@/lib/seo/generator';
 import { calculateQuantityPrice, roundSellingPriceToNine, type PricingFormula } from '@/lib/pricing/formula';
 import { codBasePrice, codProductCost, numeric } from '@/lib/products/cod-pricing';
 import { arabicQuantityValue } from '@/lib/products/arabic-content';
-import { buildYouCanProductPayload } from '@/lib/products/youcan-payload';
+import { buildYouCanProductPayload, quantityVariantSku } from '@/lib/products/youcan-payload';
+import { assessMerchantCompliance, blockingMerchantIssueReasons } from '@/lib/products/merchant-compliance';
 import { priceYouCanQuantityVariants } from '@/lib/products/youcan-variant-pricing';
 import { selectAccurateProductImages, REQUIRED_PRODUCT_IMAGE_COUNT, buildProductImageSearchQuery } from '@/lib/products/image-enrichment';
 import { validateBeforeYouCanImport, shouldMarkNeedsReview } from '@/lib/products/import-validation';
@@ -28,11 +29,11 @@ import { requireCleanCodSku } from '@/lib/products/sku';
 import { ensureMappedCategory } from '@/lib/categories/youcan-sync';
 import { YouCanClient, type YouCanProduct, type YouCanProductUpdatePayload, type YouCanVariant, youCanPrimaryVariantId, youCanProductPublicUrl, youCanProductVariants } from '@/lib/integrations/youcan/client';
 import { buildMerchantProductInput } from '@/lib/products/gmc-payload';
-import { GoogleMerchantClient, priceToMicros } from '@/lib/integrations/google-merchant/client';
+import { GoogleMerchantClient, merchantResourceId, priceToMicros } from '@/lib/integrations/google-merchant/client';
 import { deriveGmcStatusDetails, merchantIssues, persistedGmcStatus } from '@/lib/products/gmc-status';
 import { getOptionalConfig } from '@/lib/settings/config';
 import { getSettingValue } from '@/lib/settings/runtime';
-import { toJsonValue } from '@/lib/http/client';
+import { ApiError, toJsonValue } from '@/lib/http/client';
 
 export async function discoverCodProducts(country: CountryCode = CountryCode.SA) {
   const syncRun = await prisma.syncRun.create({
@@ -415,6 +416,12 @@ export async function pushToGmc(codProductId: string) {
     include: { seoMetadata: true, category: true, mapping: true },
   });
   if (!product.mapping || !product.seoMetadata) throw new Error('Cannot push to GMC before mapping and SEO exist.');
+  const lastSubmission = await prisma.gmcSubmission.findFirst({ where: { codProductId }, orderBy: { createdAt: 'desc' }, select: { issues: true } });
+  const exclusionReasons = [...new Set([...codMerchantExclusionReasons(product), ...blockingMerchantIssueReasons(lastSubmission?.issues)])];
+  if (exclusionReasons.length) {
+    await excludeCodProduct(product, exclusionReasons);
+    return { excluded: true, reasons: exclusionReasons };
+  }
   const appBaseUrl = env.APP_BASE_URL ?? env.YOUCAN_STORE_URL;
   if (!appBaseUrl) throw new Error('APP_BASE_URL or YOUCAN_STORE_URL is required to build Google Merchant product links.');
 
@@ -431,7 +438,13 @@ export async function pushToGmc(codProductId: string) {
     currencyCode: env.GMC_CURRENCY ?? 'SAR',
   });
   const response = await merchant.insertProduct(payload);
-  const productId = response.product ? String(response.product).split('/').pop() : merchant.buildProductId(payload);
+  const productId = merchantResourceId(String(
+    response.base64EncodedProduct
+      ?? response.base64EncodedName
+      ?? response.product
+      ?? response.name
+      ?? merchant.buildProductId(payload),
+  ));
 
   await prisma.gmcSubmission.create({
     data: {
@@ -802,6 +815,9 @@ export async function updateAllDiscountVariantsOnYouCan() {
   const products = await prisma.codProduct.findMany({
     where: {
       importStatus: { in: [ImportStatus.IMPORTED, ImportStatus.UPDATED] },
+      sourceStatus: { notIn: [ProductSourceStatus.OUT_OF_STOCK, ProductSourceStatus.DISABLED, ProductSourceStatus.ERROR] },
+      stockStatus: StockStatus.IN_STOCK,
+      visibilityStatus: VisibilityStatus.VISIBLE,
       mapping: { is: { youCanProductId: { not: null } } },
       codSku: { not: null },
     },
@@ -847,6 +863,34 @@ export async function updateAllDiscountVariantsOnYouCan() {
 
   await logEvent({ source: LogSource.YOUCAN, message: `Bulk variant replacement finished: ${updated} updated, ${failed} failed`, context: toJsonValue({ total: products.length, updated, failed, mode: 'replace-legacy-with-configured-only' }) });
   return { total: products.length, updated, failed };
+}
+
+export async function remediateMerchantCatalog() {
+  const products = await prisma.codProduct.findMany({
+    where: { mapping: { isNot: null } },
+    include: {
+      mapping: true,
+      seoMetadata: true,
+      gmcSubmissions: { orderBy: { createdAt: 'desc' }, take: 1, select: { issues: true } },
+    },
+  });
+  let excluded = 0;
+  let failed = 0;
+  for (const product of products) {
+    const reasons = [...new Set([
+      ...codMerchantExclusionReasons(product),
+      ...blockingMerchantIssueReasons(product.gmcSubmissions[0]?.issues),
+    ])];
+    if (!reasons.length) continue;
+    try {
+      await excludeCodProduct(product, reasons);
+      excluded += 1;
+    } catch (error) {
+      failed += 1;
+      await prisma.codProduct.update({ where: { id: product.id }, data: { lastError: String(error) } });
+    }
+  }
+  return { scanned: products.length, excluded, failed };
 }
 
 function buildVariantResetPayload(payload: YouCanProductUpdatePayload): YouCanProductUpdatePayload {
@@ -904,6 +948,7 @@ async function buildDiscountVariantUpdatePayload(
       name: stringValue(remote.name) ?? product.seoMetadata?.title ?? product.name,
       has_variants: false,
       price,
+      compare_at_price: price,
       visibility: visible,
       track_inventory: true,
       inventory: product.stockQuantity ?? undefined,
@@ -915,6 +960,7 @@ async function buildDiscountVariantUpdatePayload(
     name: stringValue(remote.name) ?? product.seoMetadata?.title ?? product.name,
     has_variants: true,
     price,
+    compare_at_price: price,
     visibility: visible,
     track_inventory: true,
     variant_options: [{ name: optionName, type: Number((await getOptionalConfig()).YOUCAN_TEXT_BUTTON_VARIANT_TYPE ?? 2), values: [singleQuantityLabel, ...activeRules.map((rule) => rule.label?.trim() || arabicQuantityValue(rule.quantity))] }],
@@ -930,7 +976,7 @@ async function buildDiscountVariantUpdatePayload(
       ...activeRules.map((rule) => ({
         variations: { [optionName]: rule.label?.trim() || arabicQuantityValue(rule.quantity) },
         price: calculateQuantityPrice(price, rule.quantity, Number(rule.discountPercent)),
-        sku,
+        sku: quantityVariantSku(sku, rule.quantity),
         inventory: product.stockQuantity ?? undefined,
         is_default: false,
         is_selected: false,
@@ -1138,9 +1184,55 @@ function mergeImageUrls(...groups: Array<unknown[] | null | undefined>) {
 }
 
 function merchantProductInputId(productId: string) {
-  const marker = '/products/';
-  const index = productId.indexOf(marker);
-  return index >= 0 ? productId.slice(index + marker.length) : productId;
+  return merchantResourceId(productId);
+}
+
+function codMerchantExclusionReasons(product: {
+  name?: string | null;
+  rawName?: string | null;
+  description?: string | null;
+  rawDescription?: string | null;
+  seoMetadata?: { title?: string | null; description?: string | null } | null;
+  sourceStatus: ProductSourceStatus;
+  stockStatus: StockStatus;
+  visibilityStatus: VisibilityStatus;
+}) {
+  const decision = assessMerchantCompliance({
+    ...product,
+    seoTitle: product.seoMetadata?.title,
+    seoDescription: product.seoMetadata?.description,
+  });
+  const reasons = [...decision.reasons];
+  if (product.sourceStatus === ProductSourceStatus.OUT_OF_STOCK || product.sourceStatus === ProductSourceStatus.DISABLED || product.sourceStatus === ProductSourceStatus.ERROR) reasons.push('product unavailable at source');
+  if (product.stockStatus === StockStatus.OUT_OF_STOCK) reasons.push('product out of stock');
+  if (product.visibilityStatus === VisibilityStatus.HIDDEN) reasons.push('product hidden from storefront');
+  return [...new Set(reasons)];
+}
+
+async function excludeCodProduct(
+  product: { id: string; mapping?: { id: string; youCanProductId: string | null; googleProductId: string | null } | null },
+  reasons: string[],
+) {
+  if (product.mapping?.youCanProductId) {
+    const youcan = await YouCanClient.create();
+    await youcan.setProductVisibility(product.mapping.youCanProductId, false);
+  }
+  if (product.mapping?.googleProductId) {
+    try {
+      const merchant = await GoogleMerchantClient.create();
+      await merchant.deleteProductInput({ productInputId: product.mapping.googleProductId });
+    } catch (error) {
+      if (!(error instanceof ApiError && error.status === 404)) throw error;
+    }
+  }
+  await prisma.$transaction([
+    prisma.codProduct.update({
+      where: { id: product.id },
+      data: { gmcStatus: GmcStatus.EXCLUDED, visibilityStatus: VisibilityStatus.HIDDEN, lastError: null },
+    }),
+    ...(product.mapping ? [prisma.productMapping.update({ where: { id: product.mapping.id }, data: { googleProductId: null } })] : []),
+  ]);
+  await logEvent({ source: LogSource.GMC, level: LogLevel.WARN, message: 'Excluded product from storefront and Merchant Center', codProductId: product.id, context: toJsonValue({ reasons }) });
 }
 
 function normalizeCurrencyCode(value: string) {

@@ -221,6 +221,11 @@ export class YouCanClient {
     return unwrapProduct(response, 'update product');
   }
 
+  async setProductVisibility(id: string, visible: boolean) {
+    const response = await this.post<YouCanProductResponse>(`${this.baseUrl}/products/update/${id}`, { visibility: visible });
+    return unwrapProduct(response, visible ? 'show product' : 'hide product');
+  }
+
   async createOrUpdateBySku(sku: string, payload: YouCanProductPayload, existingId?: string) {
     if (existingId) {
       return this.updateProduct(existingId, payload);

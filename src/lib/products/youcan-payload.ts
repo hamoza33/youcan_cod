@@ -35,7 +35,8 @@ export function buildYouCanProductPayload(input: {
     visibility: input.visible,
     track_inventory: true,
     price,
-    compare_at_price: input.product.compareAtPrice ? Number(input.product.compareAtPrice) : undefined,
+    // Keep structured-data pricing aligned with the price shown to shoppers.
+    compare_at_price: price,
     cost_price: input.product.productCost ? Number(input.product.productCost) : undefined,
     categories: [input.category.youCanCategoryId],
     images: imageUrls.map((url, index) => ({ name: url, order: index + 1, type: 1 as const })),
@@ -75,7 +76,7 @@ export function buildYouCanProductPayload(input: {
       ...activeRules.map((rule) => ({
         variations: { [optionName]: quantityLabel(rule) },
         price: calculateQuantityPrice(price, rule.quantity, Number(rule.discountPercent)),
-        sku: cleanSku,
+        sku: quantityVariantSku(cleanSku, rule.quantity),
         inventory: input.product.stockQuantity ?? undefined,
         image: imageUrls[0],
         is_default: false,
@@ -83,6 +84,10 @@ export function buildYouCanProductPayload(input: {
       })),
     ],
   };
+}
+
+export function quantityVariantSku(baseSku: string, quantity: number) {
+  return quantity === 1 ? baseSku : `${baseSku}-Q${quantity}`;
 }
 
 function proxiedImageUrls(product: CodProduct, appBaseUrl?: string | null) {
