@@ -222,12 +222,27 @@ export class YouCanClient {
   }
 
   async setProductVisibility(id: string, visible: boolean) {
-    const current = await this.getProduct(id);
+    const current = await this.getProduct(id, { include: ['variants'] });
+    if (current.visibility === visible) return current;
+    const hasVariants = current.has_variants === true || current.has_variants === 1 || current.has_variants === '1' || current.has_variants === 'true';
+    const variantOptions = Array.isArray(current.variant_options)
+      ? current.variant_options as YouCanProductPayload['variant_options']
+      : undefined;
+    const variants = hasVariants ? youCanProductVariants(current).map((variant) => ({
+      variations: variant.variations,
+      price: Number(variant.price ?? current.price ?? 0),
+      sku: variant.sku,
+      inventory: variant.inventory,
+      is_default: variant.is_default,
+      is_selected: variant.is_selected,
+    })) : undefined;
     return this.updateProduct(id, {
       name: current.name,
       price: Number(current.price ?? 0),
-      has_variants: current.has_variants === true || current.has_variants === 1 || current.has_variants === '1' || current.has_variants === 'true',
+      has_variants: hasVariants,
       visibility: visible,
+      variant_options: variantOptions,
+      variants,
     });
   }
 
