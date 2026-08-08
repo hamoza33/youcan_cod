@@ -31,7 +31,7 @@ export type YouCanProductPayload = {
   inventory?: number;
   sku?: string;
   price: number;
-  compare_at_price?: number;
+  compare_at_price?: number | null;
   cost_price?: number;
   categories?: string[];
   variant_options?: Array<{ name: string; type: number; values: string[] }>;

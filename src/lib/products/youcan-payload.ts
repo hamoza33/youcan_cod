@@ -36,7 +36,7 @@ export function buildYouCanProductPayload(input: {
     track_inventory: true,
     price,
     // Keep structured-data pricing aligned with the price shown to shoppers.
-    compare_at_price: price,
+    compare_at_price: null,
     cost_price: input.product.productCost ? Number(input.product.productCost) : undefined,
     categories: [input.category.youCanCategoryId],
     images: imageUrls.map((url, index) => ({ name: url, order: index + 1, type: 1 as const })),
