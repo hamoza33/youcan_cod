@@ -33,7 +33,7 @@ import { GoogleMerchantClient, merchantResourceId, priceToMicros } from '@/lib/i
 import { deriveGmcStatusDetails, merchantIssues, persistedGmcStatus } from '@/lib/products/gmc-status';
 import { getOptionalConfig } from '@/lib/settings/config';
 import { getSettingValue } from '@/lib/settings/runtime';
-import { ApiError, toJsonValue } from '@/lib/http/client';
+import { ApiError, errorToJson, toJsonValue } from '@/lib/http/client';
 
 export async function discoverCodProducts(country: CountryCode = CountryCode.SA) {
   const syncRun = await prisma.syncRun.create({
@@ -812,6 +812,7 @@ function booleanValue(value: unknown) {
 }
 
 export async function updateAllDiscountVariantsOnYouCan() {
+  const normalizeLimit = positiveInteger(process.env.YOUCAN_NORMALIZE_LIMIT);
   const products = await prisma.codProduct.findMany({
     where: {
       importStatus: { in: [ImportStatus.IMPORTED, ImportStatus.UPDATED] },
@@ -822,6 +823,7 @@ export async function updateAllDiscountVariantsOnYouCan() {
       codSku: { not: null },
     },
     include: { mapping: true, seoMetadata: true },
+    take: normalizeLimit,
   });
   const youcan = await YouCanClient.create();
   let updated = 0;
@@ -857,12 +859,18 @@ export async function updateAllDiscountVariantsOnYouCan() {
     } catch (error) {
       failed += 1;
       await prisma.codProduct.update({ where: { id: product.id }, data: { lastError: String(error) } });
-      await logEvent({ source: LogSource.YOUCAN, level: LogLevel.ERROR, message: 'Failed to replace legacy YouCan variants with configured variants', codProductId: product.id, context: toJsonValue({ error: String(error) }) });
+      await logEvent({ source: LogSource.YOUCAN, level: LogLevel.ERROR, message: 'Failed to replace legacy YouCan variants with configured variants', codProductId: product.id, context: toJsonValue({ error: errorToJson(error) }) });
     }
   }
 
   await logEvent({ source: LogSource.YOUCAN, message: `Bulk variant replacement finished: ${updated} updated, ${failed} failed`, context: toJsonValue({ total: products.length, updated, failed, mode: 'replace-legacy-with-configured-only' }) });
   return { total: products.length, updated, failed };
+}
+
+function positiveInteger(value: string | undefined) {
+  if (!value) return undefined;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 export async function remediateMerchantCatalog() {
