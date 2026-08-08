@@ -222,8 +222,13 @@ export class YouCanClient {
   }
 
   async setProductVisibility(id: string, visible: boolean) {
-    const response = await this.post<YouCanProductResponse>(`${this.baseUrl}/products/update/${id}`, { visibility: visible });
-    return unwrapProduct(response, visible ? 'show product' : 'hide product');
+    const current = await this.getProduct(id);
+    return this.updateProduct(id, {
+      name: current.name,
+      price: Number(current.price ?? 0),
+      has_variants: current.has_variants === true || current.has_variants === 1 || current.has_variants === '1' || current.has_variants === 'true',
+      visibility: visible,
+    });
   }
 
   async createOrUpdateBySku(sku: string, payload: YouCanProductPayload, existingId?: string) {
