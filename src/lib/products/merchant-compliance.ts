@@ -15,7 +15,7 @@ type ProductText = {
 const WEAPON_PATTERN = /\b(?:airsoft|firearm|gun|guns|pistol|rifle|revolver|shotgun|weapon)\b|(?:مسدس|بندقية|سلاح|أسلحة)/iu;
 const MASSAGE_GUN_PATTERN = /\bmassage\s+gun\b|مسدس\s+(?:تدليك|مساج)/iu;
 const TOBACCO_PATTERN = /\b(?:ashtray|cigar(?:ette)?s?|hookah|rolling\s+papers?|shisha|smoking\s+pipe|tobacco|vapes?|vaping)\b|(?:أرجيلة|ارجيلة|تبغ|تدخين|سجائر?|سيجار|شيشة|فيب|منفضة\s+سجائر)/iu;
-const ADULT_PATTERN = /\b(?:delay\s+(?:cream|gel|spray)|erectile|intimate\s+stimulant|libido|male\s+enhancement|penis|sex\s+toy|sexual(?:ly)?\s+balm|sexual\s+enhancement|turbo\s+wood)\b|(?:تكبير\s+العضو|تأخير\s+القذف|مقوي\s+جنسي|منشط\s+جنسي)/iu;
+const ADULT_PATTERN = /\b(?:aphrodisiac|body\s+(?:enlargement|enhancement)|breast\s+(?:care|cream|enlarg(?:ement|ing)?|massag(?:e|er)|plump(?:ing)?)|butt(?:ock)?s?\s+(?:booster|cream|enhanc(?:ement|er)?|enlarg(?:ement|ing)?|lift(?:ing)?|massag(?:e|er))|delay\s+(?:cream|gel|spray)|erectile|hormone\s+enhancer|intimate\s+(?:lubricant|stimulant)|libido|male\s+(?:enhancement|hormone)|men\s+enlarg(?:ement|ing)?|nipple\s+(?:care|cream|whiten(?:ing)?)|penis|pheromone|sex\s+toy|sexual(?:ly)?\s+balm|sexual\s+enhancement|test(?:igni|osterone)|turbo\s+wood|vagin(?:a|al)\s+tighten(?:er|ing)?|vaginal\s+tightening)\b|(?:تكبير\s+العضو|تأخير\s+القذف|مقوي\s+جنسي|منشط\s+جنسي)/iu;
 
 /**
  * Conservative storefront and Merchant filter for products Google explicitly
