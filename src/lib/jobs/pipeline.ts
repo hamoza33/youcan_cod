@@ -1231,7 +1231,7 @@ async function excludeCodProduct(
   product: { id: string; mapping?: { id: string; youCanProductId: string | null; googleProductId: string | null } | null },
   reasons: string[],
 ) {
-  if (product.mapping?.youCanProductId) {
+  if (product.mapping?.youCanProductId && process.env.MERCHANT_REMEDIATION_SKIP_YOUCAN !== '1') {
     const youcan = await YouCanClient.create();
     await youcan.setProductVisibility(product.mapping.youCanProductId, false);
   }
